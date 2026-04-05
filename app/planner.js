@@ -204,13 +204,18 @@ const sampleData = defaultData;
 // ─── SHARED COMPONENTS ───────────────────────────────────────────
 
 function Modal({ children, onClose }) {
+  const backdropRef = useRef(null);
+  const handleMouseDown = (e) => {
+    // Only close if the click started directly on the backdrop
+    if (e.target === backdropRef.current) onClose();
+  };
   return (
-    <div style={{
+    <div ref={backdropRef} style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
       padding: "1rem",
-    }} onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} style={{
+    }} onMouseDown={handleMouseDown}>
+      <div onMouseDown={e => e.stopPropagation()} style={{
         background: "#f5f5f4",
         border: "1px solid #b4b2a9",
         borderRadius: "12px",
@@ -780,15 +785,15 @@ export default function Planner() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ fontSize: 14, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer" }}>&#8592;</button>
+            <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ fontSize: 18, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
             {weekOffset !== 0 && (
-              <button onClick={() => setWeekOffset(0)} style={{ fontSize: 11, padding: "3px 8px", background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>This week</button>
+              <button onClick={() => setWeekOffset(0)} style={{ fontSize: 12, padding: "3px 8px", background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>This week</button>
             )}
-            <span style={{ fontSize: 12, color: "#666663", minWidth: 120, textAlign: "center" }}>
+            <span style={{ fontSize: 15, fontWeight: 600, color: "#1a1a1a", minWidth: 130, textAlign: "center" }}>
               {formatDate(weekDates[0])} – {formatDate(weekDates[6])}
-              {weekOffset !== 0 && <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>({weekOffset > 0 ? "+" : ""}{weekOffset}w)</span>}
+              {weekOffset !== 0 && <span style={{ fontSize: 12, fontWeight: 400, color: "#999996", marginLeft: 4 }}>({weekOffset > 0 ? "+" : ""}{weekOffset}w)</span>}
             </span>
-            <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ fontSize: 14, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer" }}>&#8594;</button>
+            <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ fontSize: 18, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
@@ -1064,16 +1069,24 @@ export default function Planner() {
       {/* ═══ NOTES TAB ═══ */}
       {activeTab === "notes" && (
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
             <button onClick={() => setModal({ type: "manageNoteCategories" })} style={{
               fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
             }}
               onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
             >&#9881; Categories</button>
-            <span style={{ fontSize: 12, color: "#999996" }}>
-              Week of {formatDate(weekDates[0])} – {formatDate(weekDates[6])}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ fontSize: 18, padding: "2px 6px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
+              {weekOffset !== 0 && (
+                <button onClick={() => setWeekOffset(0)} style={{ fontSize: 12, padding: "3px 8px", background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>This week</button>
+              )}
+              <span style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a" }}>
+                {formatDate(weekDates[0])} – {formatDate(weekDates[6])}
+                {weekOffset !== 0 && <span style={{ fontSize: 12, fontWeight: 400, color: "#999996", marginLeft: 4 }}>({weekOffset > 0 ? "+" : ""}{weekOffset}w)</span>}
+              </span>
+              <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ fontSize: 18, padding: "2px 6px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
+            </div>
           </div>
 
           {noteCategories.map(cat => {
