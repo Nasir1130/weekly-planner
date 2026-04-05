@@ -5,7 +5,8 @@ import { loadPlannerData, savePlannerData } from '../lib/supabase';
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const PRIORITIES = ["Very High", "High", "Med", "Low"];
-const FLAT_CATEGORIES = ["School", "Friends", "Buy"];
+const DEFAULT_FLAT_CATEGORIES = ["School", "Friends", "Buy"];
+const DEFAULT_NOTE_CATEGORIES = ["Daily Thoughts", "Projects", "Dreams"];
 const RECURRENCE_OPTIONS = ["none", "weekly", "biweekly"];
 const EVENT_CATEGORIES = ["Client", "Class", "Personal"];
 const EVENT_CAT_COLORS = {
@@ -13,6 +14,45 @@ const EVENT_CAT_COLORS = {
   Class: { text: "#0F6E56", light: "#E1F5EE" },
   Personal: { text: "#1a1a1a", light: "#f2f1ee" },
 };
+
+const FLAT_CAT_PALETTE = [
+  { bg: "#EEEDFE", text: "#534AB7" },
+  { bg: "#E1F5EE", text: "#0F6E56" },
+  { bg: "#FAEEDA", text: "#854F0B" },
+  { bg: "#E6F1FB", text: "#185FA5" },
+  { bg: "#FCE8F1", text: "#A3295B" },
+  { bg: "#FEF3E2", text: "#9A5B13" },
+  { bg: "#E8F4E5", text: "#2D7A2D" },
+  { bg: "#F0ECFE", text: "#6B47B8" },
+  { bg: "#E5F6F6", text: "#1A7A7A" },
+  { bg: "#FDE8E8", text: "#B42525" },
+];
+
+// Separate palette for notes so colors don't clash with todo categories
+const NOTE_CAT_PALETTE = [
+  { bg: "#E5F6F6", text: "#1A7A7A" },  // teal
+  { bg: "#FEF3E2", text: "#9A5B13" },  // warm
+  { bg: "#F0ECFE", text: "#6B47B8" },  // violet
+  { bg: "#E8F4E5", text: "#2D7A2D" },  // forest
+  { bg: "#FCE8F1", text: "#A3295B" },  // rose
+  { bg: "#E6F1FB", text: "#185FA5" },  // blue
+  { bg: "#FAEEDA", text: "#854F0B" },  // amber
+  { bg: "#EEEDFE", text: "#534AB7" },  // purple
+  { bg: "#FDE8E8", text: "#B42525" },  // red
+  { bg: "#E1F5EE", text: "#0F6E56" },  // green
+];
+
+function getCatColor(cat, categoryList) {
+  const idx = categoryList.indexOf(cat);
+  if (idx === -1) return FLAT_CAT_PALETTE[0];
+  return FLAT_CAT_PALETTE[idx % FLAT_CAT_PALETTE.length];
+}
+
+function getNoteCatColor(cat, categoryList) {
+  const idx = categoryList.indexOf(cat);
+  if (idx === -1) return NOTE_CAT_PALETTE[0];
+  return NOTE_CAT_PALETTE[idx % NOTE_CAT_PALETTE.length];
+}
 
 function getMondayOfCurrentWeek() {
   const today = new Date();
@@ -74,6 +114,18 @@ function formatCompletedDate(ts) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+function formatNoteTimestamp(ts) {
+  const d = new Date(ts);
+  const day = DAYS[(d.getDay() + 6) % 7]; // Convert Sun=0 to Mon=0 based
+  const month = d.getMonth() + 1;
+  const date = d.getDate();
+  let hours = d.getHours();
+  const mins = String(d.getMinutes()).padStart(2, "0");
+  const ampm = hours >= 12 ? "pm" : "am";
+  hours = hours % 12 || 12;
+  return `${day} ${month}/${date} ${hours}:${mins}${ampm}`;
+}
+
 function parseTimeToMinutes(t) {
   if (!t) return 9999;
   const lower = t.toLowerCase().trim();
@@ -96,7 +148,7 @@ const defaultData = () => ({
   schedule: DAYS.reduce((acc, day) => ({ ...acc, [day]: [] }), {}),
   todos: {
     priority: PRIORITIES.reduce((acc, p) => ({ ...acc, [p]: [] }), {}),
-    flat: FLAT_CATEGORIES.reduce((acc, c) => ({ ...acc, [c]: [] }), {}),
+    flat: DEFAULT_FLAT_CATEGORIES.reduce((acc, c) => ({ ...acc, [c]: [] }), {}),
   },
   completed: [],
   collapsed: {},
@@ -105,72 +157,12 @@ const defaultData = () => ({
   weekOffset: 0,
   manualWeeklyTasks: [],
   weeklyTaskChecks: {},
+  flatCategories: DEFAULT_FLAT_CATEGORIES,
+  activeTab: "todo",
+  notes: {},           // { "2026-03-30": { "Daily Thoughts": [ { id, text, createdAt, updatedAt } ] } }
+  noteCategories: DEFAULT_NOTE_CATEGORIES,
+  noteCollapsed: {},
 });
-
-const sampleData = () => {
-  const data = defaultData();
-  const thisMonday = getMondayStr(0);
-  data.schedule = {
-    Mon: [
-      { id: uid(), time: "9:00am", endTime: "", text: "Call Tonya", recurrence: "none", bold: false, eventDate: thisMonday, category: "Personal" },
-      { id: uid(), time: "11:00am", endTime: "", text: "Sophie Session", recurrence: "biweekly", bold: false, anchorDate: thisMonday, category: "Client", excludeFromTasks: true },
-      { id: uid(), time: "1:00pm", endTime: "", text: "MM2 Session", recurrence: "weekly", bold: false, category: "Client" },
-      { id: uid(), time: "2:00pm", endTime: "", text: "LT Session SCCC", recurrence: "weekly", bold: false, category: "Client" },
-    ],
-    Tue: [
-      { id: uid(), time: "2:00pm", endTime: "", text: "STC Session", recurrence: "weekly", bold: false, category: "Client" },
-      { id: uid(), time: "3:00pm", endTime: "", text: "VA Session", recurrence: "weekly", bold: false, category: "Client" },
-    ],
-    Wed: [
-      { id: uid(), time: "11:00am", endTime: "1:00pm", text: "Group Supervision", recurrence: "weekly", bold: false, category: "Class" },
-      { id: uid(), time: "2:00pm", endTime: "", text: "MB Session", recurrence: "biweekly", bold: false, anchorDate: thisMonday, category: "Client" },
-      { id: uid(), time: "3:00pm", endTime: "", text: "MM Session", recurrence: "weekly", bold: false, category: "Client" },
-      { id: uid(), time: "PM", endTime: "", text: "Date Night", recurrence: "weekly", bold: false, category: "Personal" },
-    ],
-    Thu: [
-      { id: uid(), time: "11:00am", endTime: "", text: "JF Session", recurrence: "weekly", bold: false, category: "Client" },
-      { id: uid(), time: "12:00pm", endTime: "", text: "Drop-in Session w/ Ben", recurrence: "none", bold: false, eventDate: thisMonday, category: "Personal" },
-      { id: uid(), time: "4:00pm", endTime: "6:00pm", text: "SCCC Training", recurrence: "weekly", bold: false, category: "Class" },
-    ],
-    Fri: [
-      { id: uid(), time: "9:00am", endTime: "", text: "Intake Available", recurrence: "none", bold: false, eventDate: thisMonday, category: "Client" },
-      { id: uid(), time: "12:00pm", endTime: "", text: "Lunch w/ Chris", recurrence: "none", bold: false, eventDate: thisMonday, category: "Personal" },
-      { id: uid(), time: "2:00pm", endTime: "", text: "SG Session", recurrence: "weekly", bold: false, category: "Client" },
-    ],
-    Sat: [
-      { id: uid(), time: "10:00am", endTime: "", text: "Beach Workout", recurrence: "none", bold: false, eventDate: thisMonday, category: "Personal" },
-    ],
-    Sun: [
-      { id: uid(), time: "8:00am", endTime: "", text: "Church", recurrence: "none", bold: false, eventDate: thisMonday, category: "Personal" },
-    ],
-  };
-  data.todos.priority = {
-    "Very High": [
-      { id: uid(), text: "Delete Facebook", bold: false, checked: false },
-      { id: uid(), text: "Create new Facebook for therapist groups", bold: false, checked: false },
-      { id: uid(), text: "Taxes (week of March 16)", bold: false, checked: false },
-      { id: uid(), text: "Marriage certificate", bold: false, checked: false },
-      { id: uid(), text: "Dads keys", bold: false, checked: false },
-      { id: uid(), text: "Contribute to IRA", bold: false, checked: false },
-    ],
-    High: [
-      { id: uid(), text: "Research Honeymoon", bold: false, checked: false },
-      { id: uid(), text: "Wedding band research", bold: false, checked: false },
-      { id: uid(), text: "Advance directive", bold: false, checked: false },
-      { id: uid(), text: "Research HIPAA-compliant software for notes/scheduling", bold: false, checked: false },
-      { id: uid(), text: "Add ring to homeowners insurance (or USAA)", bold: false, checked: false },
-      { id: uid(), text: "Replace air filter in bedroom", bold: false, checked: false },
-    ],
-    Med: [],
-    Low: [
-      { id: uid(), text: "Research theater therapy groups in LA", bold: false, checked: false },
-      { id: uid(), text: "Update Mac OS", bold: false, checked: false },
-      { id: uid(), text: "Backup wired headphones", bold: false, checked: false },
-      { id: uid(), text: "Notebook for SCCC", bold: false, checked: false },
-    ],
-  };
-  return data;
-};
 
 async function loadData() {
   try {
@@ -184,6 +176,12 @@ async function loadData() {
           priority: { ...def.todos.priority, ...(data.todos?.priority || {}) },
           flat: { ...def.todos.flat, ...(data.todos?.flat || {}) },
         },
+        // Migration: derive flatCategories from existing flat keys if not present
+        flatCategories: data.flatCategories || Object.keys(data.todos?.flat || def.todos.flat),
+        noteCategories: data.noteCategories || DEFAULT_NOTE_CATEGORIES,
+        notes: data.notes || {},
+        noteCollapsed: data.noteCollapsed || {},
+        activeTab: data.activeTab || "todo",
       };
     }
     return null;
@@ -201,6 +199,10 @@ async function saveData(data) {
   }
 }
 
+const sampleData = defaultData;
+
+// ─── SHARED COMPONENTS ───────────────────────────────────────────
+
 function Modal({ children, onClose }) {
   return (
     <div style={{
@@ -212,15 +214,176 @@ function Modal({ children, onClose }) {
         background: "#f5f5f4",
         border: "1px solid #b4b2a9",
         borderRadius: "12px",
-        padding: "1.5rem", width: "100%", maxWidth: 400,
+        padding: "1.5rem", width: "100%", maxWidth: 440,
         boxShadow: "0 8px 40px rgba(0,0,0,0.3)",
         position: "relative", zIndex: 1001,
+        maxHeight: "90vh", overflowY: "auto",
       }}>
         {children}
       </div>
     </div>
   );
 }
+
+function CollapseArrow({ collapsed }) {
+  return (
+    <span style={{
+      display: "inline-block", fontSize: 11, color: "#999996",
+      transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
+      marginRight: 6, userSelect: "none",
+    }}>&#9660;</span>
+  );
+}
+
+function RecurrenceTag({ recurrence }) {
+  if (recurrence === "none") return null;
+  return (
+    <span style={{ fontSize: 11, fontWeight: 400, color: "#999996", marginLeft: 3 }}>
+      {recurrence === "weekly" ? "(R)" : "(R2)"}
+    </span>
+  );
+}
+
+// ─── REUSABLE CATEGORY MANAGER (used for both todo + notes) ──────
+
+function ManageCategoriesModal({ title, description, categories, palette, onSave, onClose, reservedNames }) {
+  const [cats, setCats] = useState(categories.map(c => ({ name: c, originalName: c })));
+  const [newCat, setNewCat] = useState("");
+  const [error, setError] = useState("");
+  const [dragIdx, setDragIdx] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const newRef = useRef(null);
+
+  const addCat = () => {
+    const trimmed = newCat.trim();
+    if (!trimmed) return;
+    if (cats.some(c => c.name.toLowerCase() === trimmed.toLowerCase()) || (reservedNames || []).some(r => r.toLowerCase() === trimmed.toLowerCase())) {
+      setError("That name is already in use");
+      return;
+    }
+    setCats([...cats, { name: trimmed, originalName: null }]);
+    setNewCat("");
+    setError("");
+  };
+
+  const renameCat = (idx, newName) => {
+    const updated = [...cats];
+    updated[idx] = { ...updated[idx], name: newName };
+    setCats(updated);
+    setError("");
+  };
+
+  const removeCat = (idx) => {
+    setCats(cats.filter((_, i) => i !== idx));
+    setError("");
+  };
+
+  const moveCat = (fromIdx, toIdx) => {
+    if (toIdx < 0 || toIdx >= cats.length) return;
+    const updated = [...cats];
+    const [item] = updated.splice(fromIdx, 1);
+    updated.splice(toIdx, 0, item);
+    setCats(updated);
+  };
+
+  const handleCatDragStart = (e, idx) => {
+    setDragIdx(idx);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(idx));
+    e.currentTarget.style.opacity = "0.4";
+  };
+  const handleCatDragEnd = (e) => {
+    e.currentTarget.style.opacity = "1";
+    setDragIdx(null);
+    setDragOverIdx(null);
+  };
+  const handleCatDragOver = (e, idx) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragOverIdx(idx);
+  };
+  const handleCatDrop = (e, toIdx) => {
+    e.preventDefault();
+    if (dragIdx !== null && dragIdx !== toIdx) moveCat(dragIdx, toIdx);
+    setDragIdx(null);
+    setDragOverIdx(null);
+  };
+
+  const handleSave = () => {
+    const names = cats.map(c => c.name.trim()).filter(Boolean);
+    const lowerNames = names.map(n => n.toLowerCase());
+    const dupes = lowerNames.filter((n, i) => lowerNames.indexOf(n) !== i);
+    if (dupes.length > 0) { setError("Duplicate category names aren't allowed"); return; }
+    if ((reservedNames || []).some(r => names.some(n => n.toLowerCase() === r.toLowerCase()))) {
+      setError("That name conflicts with a reserved name"); return;
+    }
+    const renames = {};
+    const deletions = [];
+    categories.forEach(orig => {
+      const match = cats.find(c => c.originalName === orig);
+      if (!match) deletions.push(orig);
+      else if (match.name.trim() !== orig) renames[orig] = match.name.trim();
+    });
+    const additions = cats.filter(c => c.originalName === null).map(c => c.name.trim());
+    onSave({ finalOrder: names, renames, deletions, additions });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 16, fontWeight: 500 }}>{title}</div>
+      <div style={{ fontSize: 12, color: "#666663" }}>{description}</div>
+      {cats.map((cat, idx) => {
+        const cc = palette[idx % palette.length];
+        const isOver = dragOverIdx === idx && dragIdx !== idx;
+        return (
+          <div key={cat.originalName || `new-${idx}`}>
+            {isOver && dragIdx !== null && dragIdx > idx && (
+              <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "2px 0" }} />
+            )}
+            <div draggable onDragStart={e => handleCatDragStart(e, idx)} onDragEnd={handleCatDragEnd}
+              onDragOver={e => handleCatDragOver(e, idx)} onDrop={e => handleCatDrop(e, idx)}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0",
+                background: dragIdx === idx ? "#f2f1ee" : "transparent", borderRadius: 6, transition: "background 0.1s" }}>
+              <span style={{ fontSize: 12, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none", flexShrink: 0 }} title="Drag to reorder">&#8942;</span>
+              <span style={{ width: 12, height: 12, borderRadius: "50%", background: cc.text, flexShrink: 0 }} />
+              <input value={cat.name} onChange={e => renameCat(idx, e.target.value)} style={{ flex: 1, fontSize: 14, padding: "6px 10px" }} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 0, flexShrink: 0 }}>
+                <button onClick={() => moveCat(idx, idx - 1)} disabled={idx === 0} style={{
+                  fontSize: 9, lineHeight: 1, padding: "1px 4px", border: "none", background: "transparent",
+                  color: idx === 0 ? "#d4d3d0" : "#999996", cursor: idx === 0 ? "default" : "pointer" }} title="Move up">&#9650;</button>
+                <button onClick={() => moveCat(idx, idx + 1)} disabled={idx === cats.length - 1} style={{
+                  fontSize: 9, lineHeight: 1, padding: "1px 4px", border: "none", background: "transparent",
+                  color: idx === cats.length - 1 ? "#d4d3d0" : "#999996", cursor: idx === cats.length - 1 ? "default" : "pointer" }} title="Move down">&#9660;</button>
+              </div>
+              <button onClick={() => removeCat(idx)} style={{ fontSize: 16, lineHeight: 1, padding: "4px 8px", border: "none", background: "transparent", color: "#999996", cursor: "pointer" }}
+                onMouseEnter={e => { e.currentTarget.style.color = "#A32D2D"; e.currentTarget.style.background = "#FCEBEB"; e.currentTarget.style.borderRadius = "4px"; }}
+                onMouseLeave={e => { e.currentTarget.style.color = "#999996"; e.currentTarget.style.background = "transparent"; }}
+                title="Remove category">&times;</button>
+            </div>
+            {isOver && dragIdx !== null && dragIdx < idx && (
+              <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "2px 0" }} />
+            )}
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 20 }}>
+        <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#d4d3d0", flexShrink: 0 }} />
+        <input ref={newRef} placeholder="New category name..." value={newCat}
+          onChange={e => { setNewCat(e.target.value); setError(""); }}
+          onKeyDown={e => { if (e.key === "Enter") addCat(); }}
+          style={{ flex: 1, fontSize: 14, padding: "6px 10px" }} />
+        <button onClick={addCat} style={{ fontSize: 12, padding: "4px 10px", background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Add</button>
+      </div>
+      {error && <div style={{ fontSize: 12, color: "#A32D2D" }}>{error}</div>}
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+        <button onClick={onClose}>Cancel</button>
+        <button onClick={handleSave} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save changes</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── FORM COMPONENTS ─────────────────────────────────────────────
 
 function ScheduleItemForm({ item, onSave, onCancel, onDelete, onSkip, isSkipped, isRecurring }) {
   const [time, setTime] = useState(item?.time || "");
@@ -319,27 +482,37 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories }) {
   );
 }
 
-function RecurrenceTag({ recurrence }) {
-  if (recurrence === "none") return null;
+function NoteEntryForm({ entry, onSave, onCancel, onDelete }) {
+  const [text, setText] = useState(entry?.text || "");
+  const textRef = useRef(null);
+  useEffect(() => {
+    if (textRef.current) {
+      textRef.current.focus();
+      textRef.current.style.height = "auto";
+      textRef.current.style.height = textRef.current.scrollHeight + "px";
+    }
+  }, []);
+  const autoResize = (e) => {
+    e.target.style.height = "auto";
+    e.target.style.height = e.target.scrollHeight + "px";
+  };
   return (
-    <span style={{
-      fontSize: 11, fontWeight: 400, color: "#999996",
-      marginLeft: 3,
-    }}>
-      {recurrence === "weekly" ? "(R)" : "(R2)"}
-    </span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 16, fontWeight: 500 }}>{entry ? "Edit note" : "New note"}</div>
+      <textarea ref={textRef} placeholder="Write your thoughts..." value={text}
+        onChange={e => { setText(e.target.value); autoResize(e); }}
+        style={{ fontSize: 14, padding: "10px", minHeight: 120, resize: "vertical", lineHeight: 1.6,
+          borderRadius: 8, border: "1px solid #d4d3d0", fontFamily: "inherit" }} />
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+        {entry && onDelete && <button onClick={onDelete} style={{ color: "#A32D2D", borderColor: "#F09595", marginRight: "auto" }}>Delete</button>}
+        <button onClick={onCancel}>Cancel</button>
+        <button onClick={() => { if (text.trim()) onSave(text.trim()); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
+      </div>
+    </div>
   );
 }
 
-function CollapseArrow({ collapsed }) {
-  return (
-    <span style={{
-      display: "inline-block", fontSize: 11, color: "#999996",
-      transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)",
-      marginRight: 6, userSelect: "none",
-    }}>&#9660;</span>
-  );
-}
+// ─── MAIN PLANNER ────────────────────────────────────────────────
 
 export default function Planner() {
   const [data, setData] = useState(null);
@@ -367,19 +540,26 @@ export default function Planner() {
   if (loading) return <div style={{ padding: "2rem", color: "#666663" }}>Loading...</div>;
   if (!data) return null;
 
+  const flatCategories = data.flatCategories || Object.keys(data.todos.flat);
+  const noteCategories = data.noteCategories || DEFAULT_NOTE_CATEGORIES;
+  const activeTab = data.activeTab || "todo";
+
+  const setActiveTab = (tab) => persist({ ...data, activeTab: tab });
+
   const toggleCollapse = (key) => {
     persist({ ...data, collapsed: { ...data.collapsed, [key]: !data.collapsed[key] } });
   };
 
+  const toggleNoteCollapse = (key) => {
+    persist({ ...data, noteCollapsed: { ...(data.noteCollapsed || {}), [key]: !(data.noteCollapsed || {})[key] } });
+  };
+
+  // ─── SCHEDULE CRUD ───
   const addScheduleItem = (dayKey, item) => {
     const newItem = { id: uid(), ...item, bold: false, category: item.category || "Personal" };
-    if (item.recurrence === "none") {
-      newItem.eventDate = viewingMonday;
-    } else if (item.recurrence === "biweekly") {
-      newItem.anchorDate = viewingMonday;
-    }
-    const newSchedule = { ...data.schedule, [dayKey]: sortByTime([...data.schedule[dayKey], newItem]) };
-    persist({ ...data, schedule: newSchedule });
+    if (item.recurrence === "none") newItem.eventDate = viewingMonday;
+    else if (item.recurrence === "biweekly") newItem.anchorDate = viewingMonday;
+    persist({ ...data, schedule: { ...data.schedule, [dayKey]: sortByTime([...data.schedule[dayKey], newItem]) } });
     setModal(null);
   };
 
@@ -387,16 +567,9 @@ export default function Planner() {
     const items = sortByTime(data.schedule[dayKey].map(it => {
       if (it.id !== itemId) return it;
       const updated = { ...it, ...updates };
-      if (updates.recurrence === "none" && !updated.eventDate) {
-        updated.eventDate = viewingMonday;
-      }
-      if (updates.recurrence === "biweekly" && !updated.anchorDate) {
-        updated.anchorDate = viewingMonday;
-      }
-      if (updates.recurrence === "weekly") {
-        delete updated.eventDate;
-        delete updated.anchorDate;
-      }
+      if (updates.recurrence === "none" && !updated.eventDate) updated.eventDate = viewingMonday;
+      if (updates.recurrence === "biweekly" && !updated.anchorDate) updated.anchorDate = viewingMonday;
+      if (updates.recurrence === "weekly") { delete updated.eventDate; delete updated.anchorDate; }
       return updated;
     }));
     persist({ ...data, schedule: { ...data.schedule, [dayKey]: items } });
@@ -404,8 +577,7 @@ export default function Planner() {
   };
 
   const deleteScheduleItem = (dayKey, itemId) => {
-    const items = data.schedule[dayKey].filter(it => it.id !== itemId);
-    persist({ ...data, schedule: { ...data.schedule, [dayKey]: items } });
+    persist({ ...data, schedule: { ...data.schedule, [dayKey]: data.schedule[dayKey].filter(it => it.id !== itemId) } });
     setModal(null);
   };
 
@@ -414,25 +586,18 @@ export default function Planner() {
       if (it.id !== itemId) return it;
       const skipDates = it.skipDates || [];
       const alreadySkipped = skipDates.includes(viewingMonday);
-      return {
-        ...it,
-        skipDates: alreadySkipped
-          ? skipDates.filter(d => d !== viewingMonday)
-          : [...skipDates, viewingMonday],
-      };
+      return { ...it, skipDates: alreadySkipped ? skipDates.filter(d => d !== viewingMonday) : [...skipDates, viewingMonday] };
     });
     persist({ ...data, schedule: { ...data.schedule, [dayKey]: items } });
     setModal(null);
   };
 
+  // ─── TODO CRUD ───
   const addTodoItem = (section, subKey, item) => {
     const newItem = { id: uid(), text: item.text, bold: item.bold, checked: false };
     const newTodos = { ...data.todos };
-    if (section === "priority") {
-      newTodos.priority = { ...newTodos.priority, [subKey]: [...newTodos.priority[subKey], newItem] };
-    } else {
-      newTodos.flat = { ...newTodos.flat, [subKey]: [...newTodos.flat[subKey], newItem] };
-    }
+    if (section === "priority") newTodos.priority = { ...newTodos.priority, [subKey]: [...newTodos.priority[subKey], newItem] };
+    else newTodos.flat = { ...newTodos.flat, [subKey]: [...newTodos.flat[subKey], newItem] };
     persist({ ...data, todos: newTodos });
     setModal(null);
   };
@@ -447,15 +612,8 @@ export default function Planner() {
       const targetSection = isPriorityTarget ? newTodos.priority : newTodos.flat;
       targetSection[updates.moveTarget] = [...targetSection[updates.moveTarget], { ...item, text: updates.text, bold: updates.bold }];
     } else {
-      if (section === "priority") {
-        newTodos.priority[subKey] = newTodos.priority[subKey].map(it =>
-          it.id === itemId ? { ...it, text: updates.text, bold: updates.bold } : it
-        );
-      } else {
-        newTodos.flat[subKey] = newTodos.flat[subKey].map(it =>
-          it.id === itemId ? { ...it, text: updates.text, bold: updates.bold } : it
-        );
-      }
+      const list = section === "priority" ? newTodos.priority : newTodos.flat;
+      list[subKey] = list[subKey].map(it => it.id === itemId ? { ...it, text: updates.text, bold: updates.bold } : it);
     }
     persist({ ...data, todos: newTodos });
     setModal(null);
@@ -463,11 +621,8 @@ export default function Planner() {
 
   const deleteTodoItem = (section, subKey, itemId) => {
     const newTodos = { ...data.todos };
-    if (section === "priority") {
-      newTodos.priority[subKey] = newTodos.priority[subKey].filter(it => it.id !== itemId);
-    } else {
-      newTodos.flat[subKey] = newTodos.flat[subKey].filter(it => it.id !== itemId);
-    }
+    if (section === "priority") newTodos.priority[subKey] = newTodos.priority[subKey].filter(it => it.id !== itemId);
+    else newTodos.flat[subKey] = newTodos.flat[subKey].filter(it => it.id !== itemId);
     persist({ ...data, todos: newTodos });
     setModal(null);
   };
@@ -482,11 +637,7 @@ export default function Planner() {
       item = newTodos.flat[subKey].find(it => it.id === itemId);
       newTodos.flat[subKey] = newTodos.flat[subKey].filter(it => it.id !== itemId);
     }
-    const completedItem = {
-      ...item, checked: true, completedAt: Date.now(),
-      completedWeek: viewingMonday,
-      fromSection: section, fromKey: subKey,
-    };
+    const completedItem = { ...item, checked: true, completedAt: Date.now(), completedWeek: viewingMonday, fromSection: section, fromKey: subKey };
     persist({ ...data, todos: newTodos, completed: [...data.completed, completedItem] });
   };
 
@@ -506,7 +657,78 @@ export default function Planner() {
     persist({ ...data, todos: newTodos, completed: newCompleted });
   };
 
-  const allMoveTargets = [...PRIORITIES, ...FLAT_CATEGORIES];
+  // ─── CATEGORY MANAGEMENT (todos) ───
+  const handleManageCategories = ({ finalOrder, renames, deletions, additions }) => {
+    const newTodos = JSON.parse(JSON.stringify(data.todos));
+    const newCollapsed = { ...data.collapsed };
+    let newCompleted = [...data.completed];
+    Object.entries(renames).forEach(([oldName, newName]) => {
+      if (newTodos.flat[oldName]) { newTodos.flat[newName] = newTodos.flat[oldName]; delete newTodos.flat[oldName]; }
+      if (newCollapsed[oldName] !== undefined) { newCollapsed[newName] = newCollapsed[oldName]; delete newCollapsed[oldName]; }
+      newCompleted = newCompleted.map(item => item.fromSection === "flat" && item.fromKey === oldName ? { ...item, fromKey: newName } : item);
+    });
+    deletions.forEach(cat => { delete newTodos.flat[cat]; delete newCollapsed[cat]; });
+    additions.forEach(cat => { if (!newTodos.flat[cat]) newTodos.flat[cat] = []; });
+    const reorderedFlat = {};
+    finalOrder.forEach(name => { reorderedFlat[name] = newTodos.flat[name] || []; });
+    persist({ ...data, todos: { ...newTodos, flat: reorderedFlat }, collapsed: newCollapsed, completed: newCompleted, flatCategories: finalOrder });
+    setModal(null);
+  };
+
+  // ─── NOTES CRUD ───
+  const getWeekNotes = () => (data.notes || {})[viewingMonday] || {};
+
+  const addNoteEntry = (category, text) => {
+    const notes = JSON.parse(JSON.stringify(data.notes || {}));
+    if (!notes[viewingMonday]) notes[viewingMonday] = {};
+    if (!notes[viewingMonday][category]) notes[viewingMonday][category] = [];
+    const now = Date.now();
+    notes[viewingMonday][category].push({ id: uid(), text, createdAt: now, updatedAt: now });
+    persist({ ...data, notes });
+    setModal(null);
+  };
+
+  const editNoteEntry = (category, entryId, text) => {
+    const notes = JSON.parse(JSON.stringify(data.notes || {}));
+    const catEntries = notes[viewingMonday]?.[category];
+    if (!catEntries) return;
+    const idx = catEntries.findIndex(e => e.id === entryId);
+    if (idx === -1) return;
+    catEntries[idx] = { ...catEntries[idx], text, updatedAt: Date.now() };
+    persist({ ...data, notes });
+    setModal(null);
+  };
+
+  const deleteNoteEntry = (category, entryId) => {
+    const notes = JSON.parse(JSON.stringify(data.notes || {}));
+    const catEntries = notes[viewingMonday]?.[category];
+    if (!catEntries) return;
+    notes[viewingMonday][category] = catEntries.filter(e => e.id !== entryId);
+    persist({ ...data, notes });
+    setModal(null);
+  };
+
+  // ─── NOTE CATEGORY MANAGEMENT ───
+  const handleManageNoteCategories = ({ finalOrder, renames, deletions, additions }) => {
+    const notes = JSON.parse(JSON.stringify(data.notes || {}));
+    const newNoteCollapsed = { ...(data.noteCollapsed || {}) };
+    // Apply renames and deletions across ALL weeks
+    Object.keys(notes).forEach(weekKey => {
+      Object.entries(renames).forEach(([oldName, newName]) => {
+        if (notes[weekKey][oldName]) { notes[weekKey][newName] = notes[weekKey][oldName]; delete notes[weekKey][oldName]; }
+      });
+      deletions.forEach(cat => { delete notes[weekKey][cat]; });
+    });
+    Object.entries(renames).forEach(([oldName, newName]) => {
+      if (newNoteCollapsed[oldName] !== undefined) { newNoteCollapsed[newName] = newNoteCollapsed[oldName]; delete newNoteCollapsed[oldName]; }
+    });
+    deletions.forEach(cat => { delete newNoteCollapsed[cat]; });
+    persist({ ...data, notes, noteCategories: finalOrder, noteCollapsed: newNoteCollapsed });
+    setModal(null);
+  };
+
+  // ─── DRAG & DROP (todos) ───
+  const allMoveTargets = [...PRIORITIES, ...flatCategories];
 
   const handleDragStart = (e, section, subKey, itemId) => {
     setDragItem({ section, subKey, itemId });
@@ -514,19 +736,8 @@ export default function Planner() {
     e.dataTransfer.setData("text/plain", itemId);
     e.currentTarget.style.opacity = "0.4";
   };
-
-  const handleDragEnd = (e) => {
-    e.currentTarget.style.opacity = "1";
-    setDragItem(null);
-    setDropTarget(null);
-  };
-
-  const handleDragOver = (e, section, subKey, insertIndex) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDropTarget({ section, subKey, insertIndex });
-  };
-
+  const handleDragEnd = (e) => { e.currentTarget.style.opacity = "1"; setDragItem(null); setDropTarget(null); };
+  const handleDragOver = (e, section, subKey, insertIndex) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDropTarget({ section, subKey, insertIndex }); };
   const handleDrop = (e, targetSection, targetSubKey, insertIndex) => {
     e.preventDefault();
     if (!dragItem) return;
@@ -543,16 +754,10 @@ export default function Planner() {
     if (idx > targetList.length) idx = targetList.length;
     targetList.splice(idx, 0, item);
     persist({ ...data, todos: newTodos });
-    setDragItem(null);
-    setDropTarget(null);
+    setDragItem(null); setDropTarget(null);
   };
-
-  const isDropHere = (section, subKey, index) =>
-    dropTarget && dropTarget.section === section && dropTarget.subKey === subKey && dropTarget.insertIndex === index;
-
-  const dropIndicator = (
-    <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "1px 8px" }} />
-  );
+  const isDropHere = (section, subKey, index) => dropTarget && dropTarget.section === section && dropTarget.subKey === subKey && dropTarget.insertIndex === index;
+  const dropIndicator = <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "1px 8px" }} />;
 
   const priorityColors = {
     "Very High": { bg: "#FCEBEB", text: "#A32D2D", border: "#F09595" },
@@ -561,9 +766,12 @@ export default function Planner() {
     Low: { bg: "#f8f8f6", text: "#999996", border: "#d4d3d0" },
   };
 
+  // ─── RENDER ────────────────────────────────────────────────────
+
   return (
     <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif", maxWidth: 960, margin: "0 auto", padding: "0.5rem 0 2rem" }}>
-      {/* WEEKLY SCHEDULE */}
+
+      {/* ═══ WEEKLY SCHEDULE ═══ */}
       <div style={{ marginBottom: "1.5rem", paddingBottom: "1.5rem", borderBottom: "1.5px solid #d4d3d0" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 10, gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
@@ -572,27 +780,15 @@ export default function Planner() {
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button onClick={() => setWeekOffset(weekOffset - 1)} style={{
-              fontSize: 14, padding: "2px 8px", border: "none", background: "transparent",
-              color: "#666663", cursor: "pointer",
-            }}>&#8592;</button>
+            <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ fontSize: 14, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer" }}>&#8592;</button>
             {weekOffset !== 0 && (
-              <button onClick={() => setWeekOffset(0)} style={{
-                fontSize: 11, padding: "3px 8px",
-                background: "#E6F1FB", color: "#185FA5",
-                borderColor: "#85B7EB",
-              }}>This week</button>
+              <button onClick={() => setWeekOffset(0)} style={{ fontSize: 11, padding: "3px 8px", background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>This week</button>
             )}
             <span style={{ fontSize: 12, color: "#666663", minWidth: 120, textAlign: "center" }}>
               {formatDate(weekDates[0])} – {formatDate(weekDates[6])}
-              {weekOffset !== 0 && <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>
-                ({weekOffset > 0 ? "+" : ""}{weekOffset}w)
-              </span>}
+              {weekOffset !== 0 && <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>({weekOffset > 0 ? "+" : ""}{weekOffset}w)</span>}
             </span>
-            <button onClick={() => setWeekOffset(weekOffset + 1)} style={{
-              fontSize: 14, padding: "2px 8px", border: "none", background: "transparent",
-              color: "#666663", cursor: "pointer",
-            }}>&#8594;</button>
+            <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ fontSize: 14, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer" }}>&#8594;</button>
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
@@ -603,51 +799,31 @@ export default function Planner() {
             const visibleItems = allItems.filter(item => {
               if (item.recurrence === "weekly") return true;
               if (item.recurrence === "biweekly") return isBiweeklyVisible(item.anchorDate, weekOffset);
-              if (item.recurrence === "none") {
-                if (!item.eventDate) return weekOffset === 0;
-                return item.eventDate === viewingMonday;
-              }
+              if (item.recurrence === "none") { if (!item.eventDate) return weekOffset === 0; return item.eventDate === viewingMonday; }
               return true;
             });
             const items = sortByTime(visibleItems);
             const isItemSkipped = (item) => item.skipDates && item.skipDates.includes(viewingMonday);
             return (
-              <div key={day} style={{
-                background: today ? "#E6F1FB" : "#f8f8f6",
-                borderRadius: "8px", padding: "8px 10px",
-                border: today ? "0.5px solid #85B7EB" : "0.5px solid #d4d3d0",
-                minHeight: 90,
-              }}>
+              <div key={day} style={{ background: today ? "#E6F1FB" : "#f8f8f6", borderRadius: "8px", padding: "8px 10px", border: today ? "0.5px solid #85B7EB" : "0.5px solid #d4d3d0", minHeight: 90 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                   <div>
                     <span style={{ fontSize: today ? 16 : 13, fontWeight: today ? 700 : 500, textDecoration: "underline", color: today ? "#185FA5" : "#1a1a1a" }}>{day}:</span>
                     <span style={{ fontSize: today ? 15 : 11, fontWeight: today ? 700 : 400, color: today ? "#185FA5" : "#999996", marginLeft: 3 }}>{formatDate(date)}</span>
                   </div>
-                  <button onClick={() => setModal({ type: "addSchedule", day })} style={{
-                    fontSize: 16, lineHeight: 1, padding: "0 4px", border: "none", background: "transparent",
-                    color: today ? "#185FA5" : "#999996", cursor: "pointer",
-                  }} title="Add event">+</button>
+                  <button onClick={() => setModal({ type: "addSchedule", day })} style={{ fontSize: 16, lineHeight: 1, padding: "0 4px", border: "none", background: "transparent", color: today ? "#185FA5" : "#999996", cursor: "pointer" }} title="Add event">+</button>
                 </div>
                 {items.map(item => {
                   const skipped = isItemSkipped(item);
                   const catColor = EVENT_CAT_COLORS[item.category] || EVENT_CAT_COLORS.Personal;
                   return (
-                  <div key={item.id} onClick={() => setModal({ type: "editSchedule", day, item })} style={{
-                    fontSize: 12, lineHeight: 1.45, marginBottom: 4, cursor: "pointer",
-                    opacity: skipped ? 0.5 : 1,
-                    textDecoration: skipped ? "line-through" : "none",
-                    borderRadius: 4, padding: "2px 4px", margin: "0 -4px",
-                  }}
-                    onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >
-                    <span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: 12, fontWeight: 700 }}>
-                      {item.time}{item.endTime ? `–${item.endTime}` : ""}
-                    </span>{" "}
-                    <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
-                    <RecurrenceTag recurrence={item.recurrence} />
-                    {skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>(skipped)</span>}
-                  </div>
+                    <div key={item.id} onClick={() => setModal({ type: "editSchedule", day, item })} style={{ fontSize: 12, lineHeight: 1.45, marginBottom: 4, cursor: "pointer", opacity: skipped ? 0.5 : 1, textDecoration: skipped ? "line-through" : "none", borderRadius: 4, padding: "2px 4px", margin: "0 -4px" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: 12, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}
+                      <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
+                      <RecurrenceTag recurrence={item.recurrence} />
+                      {skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>(skipped)</span>}
+                    </div>
                   );
                 })}
               </div>
@@ -656,310 +832,314 @@ export default function Planner() {
         </div>
       </div>
 
-      {/* TO-DO SECTION */}
-      <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <div style={{ fontSize: 16, fontWeight: 500, color: "#1a1a1a", textTransform: "uppercase", letterSpacing: "0.06em", textDecoration: "underline" }}>
-            To-do
+      {/* ═══ TAB SWITCHER ═══ */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1.5px solid #d4d3d0" }}>
+        {[
+          { key: "todo", label: "To-Do" },
+          { key: "notes", label: "Notes" },
+        ].map(tab => (
+          <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
+            fontSize: 14, fontWeight: activeTab === tab.key ? 600 : 400,
+            padding: "8px 20px",
+            background: "transparent",
+            color: activeTab === tab.key ? "#185FA5" : "#999996",
+            border: "none",
+            borderBottom: activeTab === tab.key ? "2.5px solid #185FA5" : "2.5px solid transparent",
+            cursor: "pointer",
+            marginBottom: "-1.5px",
+            letterSpacing: "0.03em",
+            textTransform: "uppercase",
+            transition: "color 0.15s, border-color 0.15s",
+          }}>{tab.label}</button>
+        ))}
+      </div>
+
+      {/* ═══ TO-DO TAB ═══ */}
+      {activeTab === "todo" && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <button onClick={() => setModal({ type: "manageCategories" })} style={{
+              fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
+            >&#9881; Categories</button>
+            {(() => {
+              const weekCompleted = data.completed.filter(it => it.completedWeek === viewingMonday || (!it.completedWeek && viewingMonday === getMondayStr(0)));
+              return (
+                <button onClick={() => persist({ ...data, showCompleted: !data.showCompleted })} style={{
+                  fontSize: 11, padding: "3px 8px",
+                  background: data.showCompleted ? "#EAF3DE" : "transparent",
+                  color: data.showCompleted ? "#3B6D11" : "#999996",
+                  borderColor: data.showCompleted ? "#C0DD97" : undefined,
+                }}>Done this week ({weekCompleted.length})</button>
+              );
+            })()}
+            <button onClick={() => persist({ ...data, showAllCompleted: !data.showAllCompleted })} style={{
+              fontSize: 11, padding: "3px 8px",
+              background: data.showAllCompleted ? "#EAF3DE" : "transparent",
+              color: data.showAllCompleted ? "#3B6D11" : "#999996",
+              borderColor: data.showAllCompleted ? "#C0DD97" : undefined,
+            }}>All completed ({data.completed.length})</button>
           </div>
+
+          {/* Weekly Tasks */}
           {(() => {
-            const weekCompleted = data.completed.filter(it => it.completedWeek === viewingMonday || (!it.completedWeek && viewingMonday === getMondayStr(0)));
+            const autoTasks = [];
+            DAYS.forEach(day => {
+              (data.schedule[day] || []).forEach(item => {
+                if (item.category !== "Client") return;
+                if (!item.text.toLowerCase().includes("session")) return;
+                if (item.excludeFromTasks) return;
+                if (item.recurrence === "none" && item.eventDate !== viewingMonday) return;
+                if (item.recurrence === "biweekly" && !isBiweeklyVisible(item.anchorDate, weekOffset)) return;
+                if (item.skipDates && item.skipDates.includes(viewingMonday)) return;
+                autoTasks.push({ id: "auto_" + item.id, text: item.text + " — progress note", sourceId: item.id, day });
+              });
+            });
+            const manualTasks = data.manualWeeklyTasks || [];
+            const allWeeklyTasks = [...autoTasks, ...manualTasks.map(t => ({ ...t, id: t.id }))];
+            const weekChecks = (data.weeklyTaskChecks || {})[viewingMonday] || {};
+            const toggleWeeklyCheck = (taskId) => {
+              const newChecks = { ...data.weeklyTaskChecks || {} };
+              const wc = { ...(newChecks[viewingMonday] || {}) };
+              wc[taskId] = !wc[taskId];
+              newChecks[viewingMonday] = wc;
+              persist({ ...data, weeklyTaskChecks: newChecks });
+            };
+            const deleteManualWeeklyTask = (taskId) => { persist({ ...data, manualWeeklyTasks: (data.manualWeeklyTasks || []).filter(t => t.id !== taskId) }); };
+            const checkedCount = allWeeklyTasks.filter(t => weekChecks[t.id]).length;
             return (
-              <button onClick={() => persist({ ...data, showCompleted: !data.showCompleted })} style={{
-                fontSize: 11, padding: "3px 8px",
-                background: data.showCompleted ? "#EAF3DE" : "transparent",
-                color: data.showCompleted ? "#3B6D11" : "#999996",
-                borderColor: data.showCompleted ? "#C0DD97" : undefined,
-              }}>
-                Done this week ({weekCompleted.length})
-              </button>
+              <div style={{ marginBottom: 12 }}>
+                <div onClick={() => toggleCollapse("weeklyTasks")} style={{ display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none", padding: "6px 0", borderBottom: "0.5px solid #d4d3d0" }}>
+                  <CollapseArrow collapsed={data.collapsed.weeklyTasks} />
+                  <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>Weekly tasks</span>
+                  <button onClick={e => { e.stopPropagation(); setModal({ type: "addWeeklyTask" }); }} style={{ fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6, background: "transparent", color: "#999996", cursor: "pointer" }}>+</button>
+                  <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{checkedCount}/{allWeeklyTasks.length}</span>
+                </div>
+                {!data.collapsed.weeklyTasks && (
+                  <div style={{ paddingLeft: 4, paddingTop: 6 }}>
+                    {allWeeklyTasks.length === 0 && <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic" }}>no tasks this week</div>}
+                    {allWeeklyTasks.map(task => {
+                      const checked = weekChecks[task.id] || false;
+                      return (
+                        <div key={task.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px" }}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleWeeklyCheck(task.id)} style={{ marginTop: 3, cursor: "pointer" }} />
+                          <span style={{ fontSize: 13, lineHeight: 1.5, flex: 1, color: checked ? "#999996" : "#1a1a1a", textDecoration: checked ? "line-through" : "none" }}>
+                            {task.day && <span style={{ fontSize: 11, color: "#999996", marginRight: 4 }}>{task.day}</span>}
+                            {task.text}
+                          </span>
+                          {task.manual && (
+                            <button onClick={() => deleteManualWeeklyTask(task.id)} style={{ fontSize: 14, padding: "2px 6px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", lineHeight: 1, borderRadius: 4 }}
+                              onMouseEnter={e => { e.currentTarget.style.color = "#A32D2D"; e.currentTarget.style.background = "#FCEBEB"; }}
+                              onMouseLeave={e => { e.currentTarget.style.color = "#666663"; e.currentTarget.style.background = "transparent"; }}
+                              title="Remove">&times;</button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })()}
-          <button onClick={() => persist({ ...data, showAllCompleted: !data.showAllCompleted })} style={{
-            fontSize: 11, padding: "3px 8px",
-            background: data.showAllCompleted ? "#EAF3DE" : "transparent",
-            color: data.showAllCompleted ? "#3B6D11" : "#999996",
-            borderColor: data.showAllCompleted ? "#C0DD97" : undefined,
-          }}>
-            All completed ({data.completed.length})
-          </button>
-        </div>
 
-        {/* WEEKLY TASKS */}
-        {(() => {
-          const autoTasks = [];
-          DAYS.forEach(day => {
-            (data.schedule[day] || []).forEach(item => {
-              if (item.category !== "Client") return;
-              if (!item.text.toLowerCase().includes("session")) return;
-              if (item.excludeFromTasks) return;
-              if (item.recurrence === "none" && item.eventDate !== viewingMonday) return;
-              if (item.recurrence === "biweekly" && !isBiweeklyVisible(item.anchorDate, weekOffset)) return;
-              if (item.skipDates && item.skipDates.includes(viewingMonday)) return;
-              autoTasks.push({ id: "auto_" + item.id, text: item.text + " — progress note", sourceId: item.id, day });
-            });
-          });
-          const manualTasks = data.manualWeeklyTasks || [];
-          const allWeeklyTasks = [...autoTasks, ...manualTasks.map(t => ({ ...t, id: t.id }))];
-          const checks = data.weeklyTaskChecks || {};
-          const weekChecks = checks[viewingMonday] || {};
-
-          const toggleWeeklyCheck = (taskId) => {
-            const newChecks = { ...data.weeklyTaskChecks || {} };
-            const wc = { ...(newChecks[viewingMonday] || {}) };
-            wc[taskId] = !wc[taskId];
-            newChecks[viewingMonday] = wc;
-            persist({ ...data, weeklyTaskChecks: newChecks });
-          };
-
-          const deleteManualWeeklyTask = (taskId) => {
-            persist({ ...data, manualWeeklyTasks: (data.manualWeeklyTasks || []).filter(t => t.id !== taskId) });
-          };
-
-          const checkedCount = allWeeklyTasks.filter(t => weekChecks[t.id]).length;
-
-          return (
-            <div style={{ marginBottom: 12 }}>
-              <div onClick={() => toggleCollapse("weeklyTasks")} style={{
-                display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none",
-                padding: "6px 0", borderBottom: "0.5px solid #d4d3d0",
-              }}>
-                <CollapseArrow collapsed={data.collapsed.weeklyTasks} />
-                <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>
-                  Weekly tasks
-                </span>
-                <button onClick={e => { e.stopPropagation(); setModal({ type: "addWeeklyTask" }); }} style={{
-                  fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6,
-                  background: "transparent", color: "#999996", cursor: "pointer",
-                }}>+</button>
-                <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>
-                  {checkedCount}/{allWeeklyTasks.length}
-                </span>
-              </div>
-              {!data.collapsed.weeklyTasks && (
-                <div style={{ paddingLeft: 4, paddingTop: 6 }}>
-                  {allWeeklyTasks.length === 0 && (
-                    <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic" }}>no tasks this week</div>
-                  )}
-                  {allWeeklyTasks.map(task => {
-                    const checked = weekChecks[task.id] || false;
-                    return (
-                      <div key={task.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px" }}>
-                        <input type="checkbox" checked={checked} onChange={() => toggleWeeklyCheck(task.id)}
-                          style={{ marginTop: 3, cursor: "pointer" }} />
-                        <span style={{
-                          fontSize: 13, lineHeight: 1.5, flex: 1,
-                          color: checked ? "#999996" : "#1a1a1a",
-                          textDecoration: checked ? "line-through" : "none",
-                        }}>
-                          {task.day && <span style={{ fontSize: 11, color: "#999996", marginRight: 4 }}>{task.day}</span>}
-                          {task.text}
-                        </span>
-                        {task.manual && (
-                          <button onClick={() => deleteManualWeeklyTask(task.id)} style={{
-                            fontSize: 14, padding: "2px 6px", border: "none", background: "transparent",
-                            color: "#666663", cursor: "pointer", lineHeight: 1,
-                            borderRadius: 4,
-                          }}
-                            onMouseEnter={e => { e.currentTarget.style.color = "#A32D2D"; e.currentTarget.style.background = "#FCEBEB"; }}
-                            onMouseLeave={e => { e.currentTarget.style.color = "#666663"; e.currentTarget.style.background = "transparent"; }}
-                            title="Remove">&times;</button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+          {/* Anytime — by priority */}
+          <div style={{ marginBottom: 12 }}>
+            <div onClick={() => toggleCollapse("anytime")} style={{ display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none", padding: "6px 0", borderBottom: "0.5px solid #d4d3d0" }}>
+              <CollapseArrow collapsed={data.collapsed.anytime} />
+              <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>Anytime — by priority</span>
             </div>
-          );
-        })()}
-
-        {/* ANYTIME — by priority */}
-        <div style={{ marginBottom: 12 }}>
-          <div onClick={() => toggleCollapse("anytime")} style={{
-            display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none",
-            padding: "6px 0", borderBottom: "0.5px solid #d4d3d0",
-          }}>
-            <CollapseArrow collapsed={data.collapsed.anytime} />
-            <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>Anytime — by priority</span>
-          </div>
-          {!data.collapsed.anytime && (
-            <div style={{ paddingTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px" }}>
-              {[["Very High", "High"], ["Med", "Low"]].map(row => row.map(priority => {
-                const pc = priorityColors[priority];
-                const items = data.todos.priority[priority] || [];
-                return (
-                  <div key={priority} style={{ marginBottom: 6 }}
-                    onDragOver={e => { if (items.length === 0) handleDragOver(e, "priority", priority, 0); }}
-                    onDrop={e => { if (items.length === 0) handleDrop(e, "priority", priority, 0); }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                      <span style={{
-                        fontSize: 11, fontWeight: 500, padding: "2px 8px",
-                        borderRadius: "8px",
-                        background: pc.bg, color: pc.text,
-                      }}>{priority}</span>
-                      <button onClick={() => setModal({ type: "addTodo", section: "priority", subKey: priority })} style={{
-                        fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none",
-                        background: "transparent", color: "#999996", cursor: "pointer",
-                      }}>+</button>
+            {!data.collapsed.anytime && (
+              <div style={{ paddingTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px" }}>
+                {[["Very High", "High"], ["Med", "Low"]].map(row => row.map(priority => {
+                  const pc = priorityColors[priority];
+                  const items = data.todos.priority[priority] || [];
+                  return (
+                    <div key={priority} style={{ marginBottom: 6 }}
+                      onDragOver={e => { if (items.length === 0) handleDragOver(e, "priority", priority, 0); }}
+                      onDrop={e => { if (items.length === 0) handleDrop(e, "priority", priority, 0); }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: "8px", background: pc.bg, color: pc.text }}>{priority}</span>
+                        <button onClick={() => setModal({ type: "addTodo", section: "priority", subKey: priority })} style={{ fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", background: "transparent", color: "#999996", cursor: "pointer" }}>+</button>
+                      </div>
+                      {items.length === 0 && <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic", border: isDropHere("priority", priority, 0) ? "1px dashed #85B7EB" : "1px dashed transparent", borderRadius: 4, padding: "4px 8px" }}>nothing current</div>}
+                      {items.map((item, idx) => (
+                        <div key={item.id}>
+                          {isDropHere("priority", priority, idx) && dropIndicator}
+                          <div draggable onDragStart={e => handleDragStart(e, "priority", priority, item.id)} onDragEnd={handleDragEnd}
+                            onDragOver={e => handleDragOver(e, "priority", priority, idx)} onDrop={e => handleDrop(e, "priority", priority, idx)}
+                            style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px", cursor: "grab" }}>
+                            <input type="checkbox" checked={false} onChange={() => checkTodoItem("priority", priority, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
+                            <span onClick={() => setModal({ type: "editTodo", section: "priority", subKey: priority, item: { ...item, _moveTarget: "" } })}
+                              style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: "#1a1a1a", flex: 1 }}
+                              onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
+                            <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
+                          </div>
+                          {idx === items.length - 1 && isDropHere("priority", priority, idx + 1) && dropIndicator}
+                        </div>
+                      ))}
+                      {items.length > 0 && <div style={{ height: 4 }} onDragOver={e => handleDragOver(e, "priority", priority, items.length)} onDrop={e => handleDrop(e, "priority", priority, items.length)} />}
                     </div>
-                    {items.length === 0 && (
-                      <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic",
-                        border: isDropHere("priority", priority, 0) ? "1px dashed #85B7EB" : "1px dashed transparent",
-                        borderRadius: 4, padding: "4px 8px",
-                      }}>nothing current</div>
-                    )}
+                  );
+                }))}
+              </div>
+            )}
+          </div>
+
+          {/* Flat categories */}
+          {flatCategories.map(cat => {
+            const items = data.todos.flat[cat] || [];
+            const cc = getCatColor(cat, flatCategories);
+            return (
+              <div key={cat} style={{ marginBottom: 12 }}>
+                <div onClick={() => toggleCollapse(cat)} style={{ display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none", padding: "6px 0", borderBottom: "0.5px solid #d4d3d0" }}>
+                  <CollapseArrow collapsed={data.collapsed[cat]} />
+                  <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>{cat}</span>
+                  <button onClick={e => { e.stopPropagation(); setModal({ type: "addTodo", section: "flat", subKey: cat }); }} style={{ fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6, background: "transparent", color: "#999996", cursor: "pointer" }}>+</button>
+                  <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{items.length}</span>
+                </div>
+                {!data.collapsed[cat] && (
+                  <div style={{ paddingLeft: 4, paddingTop: 6 }}
+                    onDragOver={e => { if (items.length === 0) handleDragOver(e, "flat", cat, 0); }}
+                    onDrop={e => { if (items.length === 0) handleDrop(e, "flat", cat, 0); }}>
+                    {items.length === 0 && <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic", border: isDropHere("flat", cat, 0) ? "1px dashed #85B7EB" : "1px dashed transparent", borderRadius: 4, padding: "4px 8px" }}>nothing here</div>}
                     {items.map((item, idx) => (
                       <div key={item.id}>
-                        {isDropHere("priority", priority, idx) && dropIndicator}
-                        <div draggable
-                          onDragStart={e => handleDragStart(e, "priority", priority, item.id)}
-                          onDragEnd={handleDragEnd}
-                          onDragOver={e => handleDragOver(e, "priority", priority, idx)}
-                          onDrop={e => handleDrop(e, "priority", priority, idx)}
+                        {isDropHere("flat", cat, idx) && dropIndicator}
+                        <div draggable onDragStart={e => handleDragStart(e, "flat", cat, item.id)} onDragEnd={handleDragEnd}
+                          onDragOver={e => handleDragOver(e, "flat", cat, idx)} onDrop={e => handleDrop(e, "flat", cat, idx)}
                           style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px", cursor: "grab" }}>
-                          <input type="checkbox" checked={false} onChange={() => checkTodoItem("priority", priority, item.id)}
-                            style={{ marginTop: 3, cursor: "pointer", accentColor: pc.text === "#A32D2D" ? "#E24B4A" : undefined }} />
-                          <span onClick={() => setModal({ type: "editTodo", section: "priority", subKey: priority, item: { ...item, _moveTarget: "" } })}
+                          <input type="checkbox" checked={false} onChange={() => checkTodoItem("flat", cat, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
+                          <span onClick={() => setModal({ type: "editTodo", section: "flat", subKey: cat, item: { ...item, _moveTarget: "" } })}
                             style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: "#1a1a1a", flex: 1 }}
-                            onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
-                            onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}
-                          >{item.text}</span>
+                            onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
                           <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
                         </div>
-                        {idx === items.length - 1 && isDropHere("priority", priority, idx + 1) && dropIndicator}
+                        {idx === items.length - 1 && isDropHere("flat", cat, idx + 1) && dropIndicator}
                       </div>
                     ))}
-                    {items.length > 0 && (
-                      <div style={{ height: 4 }}
-                        onDragOver={e => handleDragOver(e, "priority", priority, items.length)}
-                        onDrop={e => handleDrop(e, "priority", priority, items.length)} />
-                    )}
+                    {items.length > 0 && <div style={{ height: 4 }} onDragOver={e => handleDragOver(e, "flat", cat, items.length)} onDrop={e => handleDrop(e, "flat", cat, items.length)} />}
                   </div>
-                );
-              }))}
-            </div>
-          )}
-        </div>
-
-        {/* FLAT CATEGORIES */}
-        {FLAT_CATEGORIES.map(cat => {
-          const items = data.todos.flat[cat] || [];
-          const catColors = {
-            School: { bg: "#EEEDFE", text: "#534AB7" },
-            Friends: { bg: "#E1F5EE", text: "#0F6E56" },
-            Buy: { bg: "#FAEEDA", text: "#854F0B" },
-          };
-          const cc = catColors[cat];
-          return (
-            <div key={cat} style={{ marginBottom: 12 }}>
-              <div onClick={() => toggleCollapse(cat)} style={{
-                display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none",
-                padding: "6px 0", borderBottom: "0.5px solid #d4d3d0",
-              }}>
-                <CollapseArrow collapsed={data.collapsed[cat]} />
-                <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>{cat}</span>
-                <button onClick={e => { e.stopPropagation(); setModal({ type: "addTodo", section: "flat", subKey: cat }); }} style={{
-                  fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6,
-                  background: "transparent", color: "#999996", cursor: "pointer",
-                }}>+</button>
-                <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{items.length}</span>
+                )}
               </div>
-              {!data.collapsed[cat] && (
-                <div style={{ paddingLeft: 4, paddingTop: 6 }}
-                  onDragOver={e => { if (items.length === 0) handleDragOver(e, "flat", cat, 0); }}
-                  onDrop={e => { if (items.length === 0) handleDrop(e, "flat", cat, 0); }}
-                >
-                  {items.length === 0 && (
-                    <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic",
-                      border: isDropHere("flat", cat, 0) ? "1px dashed #85B7EB" : "1px dashed transparent",
-                      borderRadius: 4, padding: "4px 8px",
-                    }}>nothing here</div>
-                  )}
-                  {items.map((item, idx) => (
-                    <div key={item.id}>
-                      {isDropHere("flat", cat, idx) && dropIndicator}
-                      <div draggable
-                        onDragStart={e => handleDragStart(e, "flat", cat, item.id)}
-                        onDragEnd={handleDragEnd}
-                        onDragOver={e => handleDragOver(e, "flat", cat, idx)}
-                        onDrop={e => handleDrop(e, "flat", cat, idx)}
-                        style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px", cursor: "grab" }}>
-                        <input type="checkbox" checked={false} onChange={() => checkTodoItem("flat", cat, item.id)}
-                          style={{ marginTop: 3, cursor: "pointer" }} />
-                        <span onClick={() => setModal({ type: "editTodo", section: "flat", subKey: cat, item: { ...item, _moveTarget: "" } })}
-                          style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: "#1a1a1a", flex: 1 }}
-                          onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
-                          onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}
-                        >{item.text}</span>
-                        <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
-                      </div>
-                      {idx === items.length - 1 && isDropHere("flat", cat, idx + 1) && dropIndicator}
-                    </div>
-                  ))}
-                  {items.length > 0 && (
-                    <div style={{ height: 4 }}
-                      onDragOver={e => handleDragOver(e, "flat", cat, items.length)}
-                      onDrop={e => handleDrop(e, "flat", cat, items.length)} />
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
 
-        {/* COMPLETED THIS WEEK */}
-        {data.showCompleted && (() => {
-          const weekCompleted = data.completed.filter(it => it.completedWeek === viewingMonday || (!it.completedWeek && viewingMonday === getMondayStr(0)));
-          return (
+          {/* Completed this week */}
+          {data.showCompleted && (() => {
+            const weekCompleted = data.completed.filter(it => it.completedWeek === viewingMonday || (!it.completedWeek && viewingMonday === getMondayStr(0)));
+            return (
+              <div style={{ marginTop: 16, padding: "12px", background: "#f8f8f6", borderRadius: "8px" }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "#666663", marginBottom: 8 }}>Done this week ({formatDate(weekDates[0])} – {formatDate(weekDates[6])})</div>
+                {weekCompleted.length === 0 && <div style={{ fontSize: 12, color: "#999996", fontStyle: "italic" }}>nothing completed this week</div>}
+                {weekCompleted.slice().reverse().map(item => (
+                  <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 4px" }}>
+                    <input type="checkbox" checked={true} onChange={() => uncheckCompleted(item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
+                    <span style={{ fontSize: 13, color: "#999996", textDecoration: "line-through", lineHeight: 1.5 }}>{item.text}</span>
+                    <span style={{ fontSize: 11, color: "#999996", marginLeft: "auto", whiteSpace: "nowrap" }}>{formatCompletedDate(item.completedAt)}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* All completed */}
+          {data.showAllCompleted && (
             <div style={{ marginTop: 16, padding: "12px", background: "#f8f8f6", borderRadius: "8px" }}>
-              <div style={{ fontSize: 13, fontWeight: 500, color: "#666663", marginBottom: 8 }}>
-                Done this week ({formatDate(weekDates[0])} – {formatDate(weekDates[6])})
-              </div>
-              {weekCompleted.length === 0 && (
-                <div style={{ fontSize: 12, color: "#999996", fontStyle: "italic" }}>nothing completed this week</div>
-              )}
-              {weekCompleted.slice().reverse().map(item => (
+              <div style={{ fontSize: 13, fontWeight: 500, color: "#666663", marginBottom: 8 }}>All completed</div>
+              {data.completed.length === 0 && <div style={{ fontSize: 12, color: "#999996", fontStyle: "italic" }}>nothing completed yet</div>}
+              {data.completed.slice().reverse().map(item => (
                 <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 4px" }}>
-                  <input type="checkbox" checked={true} onChange={() => uncheckCompleted(item.id)}
-                    style={{ marginTop: 3, cursor: "pointer" }} />
-                  <span style={{ fontSize: 13, color: "#999996", textDecoration: "line-through", lineHeight: 1.5 }}>
-                    {item.text}
-                  </span>
-                  <span style={{ fontSize: 11, color: "#999996", marginLeft: "auto", whiteSpace: "nowrap" }}>
-                    {formatCompletedDate(item.completedAt)}
-                  </span>
+                  <input type="checkbox" checked={true} onChange={() => uncheckCompleted(item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
+                  <span style={{ fontSize: 13, color: "#999996", textDecoration: "line-through", lineHeight: 1.5 }}>{item.text}</span>
+                  <span style={{ fontSize: 11, color: "#999996", marginLeft: "auto", whiteSpace: "nowrap" }}>{formatCompletedDate(item.completedAt)}</span>
                 </div>
               ))}
             </div>
-          );
-        })()}
+          )}
+        </div>
+      )}
 
-        {/* ALL COMPLETED */}
-        {data.showAllCompleted && (
-          <div style={{ marginTop: 16, padding: "12px", background: "#f8f8f6", borderRadius: "8px" }}>
-            <div style={{ fontSize: 13, fontWeight: 500, color: "#666663", marginBottom: 8 }}>All completed</div>
-            {data.completed.length === 0 && (
-              <div style={{ fontSize: 12, color: "#999996", fontStyle: "italic" }}>nothing completed yet</div>
-            )}
-            {data.completed.slice().reverse().map(item => (
-              <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 4px" }}>
-                <input type="checkbox" checked={true} onChange={() => uncheckCompleted(item.id)}
-                  style={{ marginTop: 3, cursor: "pointer" }} />
-                <span style={{ fontSize: 13, color: "#999996", textDecoration: "line-through", lineHeight: 1.5 }}>
-                  {item.text}
-                </span>
-                <span style={{ fontSize: 11, color: "#999996", marginLeft: "auto", whiteSpace: "nowrap" }}>
-                  {formatCompletedDate(item.completedAt)}
-                </span>
-              </div>
-            ))}
+      {/* ═══ NOTES TAB ═══ */}
+      {activeTab === "notes" && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <button onClick={() => setModal({ type: "manageNoteCategories" })} style={{
+              fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
+            >&#9881; Categories</button>
+            <span style={{ fontSize: 12, color: "#999996" }}>
+              Week of {formatDate(weekDates[0])} – {formatDate(weekDates[6])}
+            </span>
           </div>
-        )}
-      </div>
 
-      {/* MODALS */}
+          {noteCategories.map(cat => {
+            const weekNotes = getWeekNotes();
+            const entries = weekNotes[cat] || [];
+            const cc = getNoteCatColor(cat, noteCategories);
+            const isCollapsed = (data.noteCollapsed || {})[cat];
+            return (
+              <div key={cat} style={{ marginBottom: 16 }}>
+                <div onClick={() => toggleNoteCollapse(cat)} style={{
+                  display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none",
+                  padding: "6px 0", borderBottom: "0.5px solid #d4d3d0",
+                }}>
+                  <CollapseArrow collapsed={isCollapsed} />
+                  <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>{cat}</span>
+                  <button onClick={e => { e.stopPropagation(); setModal({ type: "addNote", category: cat }); }} style={{
+                    fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6,
+                    background: "transparent", color: "#999996", cursor: "pointer",
+                  }}>+</button>
+                  <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{entries.length}</span>
+                </div>
+                {!isCollapsed && (
+                  <div style={{ paddingTop: 8 }}>
+                    {entries.length === 0 && (
+                      <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic" }}>
+                        no entries this week
+                      </div>
+                    )}
+                    {entries.map(entry => (
+                      <div key={entry.id} style={{
+                        padding: "10px 14px", marginBottom: 8,
+                        background: cc.bg, borderRadius: 8,
+                        borderLeft: `3px solid ${cc.text}`,
+                        cursor: "pointer",
+                        transition: "box-shadow 0.15s",
+                      }}
+                        onClick={() => setModal({ type: "editNote", category: cat, entry })}
+                        onMouseEnter={e => e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)"}
+                        onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
+                      >
+                        <div style={{ fontSize: 13, lineHeight: 1.65, color: "#1a1a1a", whiteSpace: "pre-wrap" }}>
+                          {entry.text}
+                        </div>
+                        <div style={{ fontSize: 11, color: cc.text, marginTop: 6, opacity: 0.7 }}>
+                          {formatNoteTimestamp(entry.createdAt)}
+                          {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
+                            <span style={{ marginLeft: 8 }}>(edited {formatNoteTimestamp(entry.updatedAt)})</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {noteCategories.length === 0 && (
+            <div style={{ fontSize: 13, color: "#999996", fontStyle: "italic", padding: "20px 0", textAlign: "center" }}>
+              No categories yet. Click ⚙ Categories to add some.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ MODALS ═══ */}
       {modal?.type === "addSchedule" && (
         <Modal onClose={() => setModal(null)}>
           <ScheduleItemForm onSave={item => addScheduleItem(modal.day, item)} onCancel={() => setModal(null)} />
@@ -999,16 +1179,14 @@ export default function Planner() {
               useEffect(() => { ref.current?.focus(); }, []);
               const handleSave = () => {
                 if (text.trim()) {
-                  const newTask = { id: uid(), text: text.trim(), manual: true };
-                  persist({ ...data, manualWeeklyTasks: [...(data.manualWeeklyTasks || []), newTask] });
+                  persist({ ...data, manualWeeklyTasks: [...(data.manualWeeklyTasks || []), { id: uid(), text: text.trim(), manual: true }] });
                   setModal(null);
                 }
               };
               return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ fontSize: 16, fontWeight: 500 }}>New weekly task</div>
-                  <input ref={ref} placeholder="e.g. Submit timesheet" value={text} onChange={e => setText(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter") handleSave(); }} />
+                  <input ref={ref} placeholder="e.g. Submit timesheet" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleSave(); }} />
                   <div style={{ fontSize: 12, color: "#999996" }}>This task will appear every week in your weekly tasks list.</div>
                   <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                     <button onClick={() => setModal(null)}>Cancel</button>
@@ -1019,6 +1197,50 @@ export default function Planner() {
             };
             return <WeeklyTaskForm />;
           })()}
+        </Modal>
+      )}
+      {modal?.type === "manageCategories" && (
+        <Modal onClose={() => setModal(null)}>
+          <ManageCategoriesModal
+            title="Manage to-do categories"
+            description="Drag to reorder, rename inline, or remove categories. Deleting a category also deletes its items."
+            categories={flatCategories}
+            palette={FLAT_CAT_PALETTE}
+            reservedNames={PRIORITIES}
+            onSave={handleManageCategories}
+            onClose={() => setModal(null)}
+          />
+        </Modal>
+      )}
+      {modal?.type === "manageNoteCategories" && (
+        <Modal onClose={() => setModal(null)}>
+          <ManageCategoriesModal
+            title="Manage note categories"
+            description="Drag to reorder, rename inline, or remove categories. Deleting a category deletes all its entries across all weeks."
+            categories={noteCategories}
+            palette={NOTE_CAT_PALETTE}
+            reservedNames={[]}
+            onSave={handleManageNoteCategories}
+            onClose={() => setModal(null)}
+          />
+        </Modal>
+      )}
+      {modal?.type === "addNote" && (
+        <Modal onClose={() => setModal(null)}>
+          <NoteEntryForm
+            onSave={text => addNoteEntry(modal.category, text)}
+            onCancel={() => setModal(null)}
+          />
+        </Modal>
+      )}
+      {modal?.type === "editNote" && (
+        <Modal onClose={() => setModal(null)}>
+          <NoteEntryForm
+            entry={modal.entry}
+            onSave={text => editNoteEntry(modal.category, modal.entry.id, text)}
+            onCancel={() => setModal(null)}
+            onDelete={() => deleteNoteEntry(modal.category, modal.entry.id)}
+          />
         </Modal>
       )}
     </div>
