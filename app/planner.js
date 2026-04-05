@@ -390,7 +390,8 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
 
 // ─── FORM COMPONENTS ─────────────────────────────────────────────
 
-function ScheduleItemForm({ item, onSave, onCancel, onDelete, onSkip, isSkipped, isRecurring }) {
+function ScheduleItemForm({ item, onSave, onSaveOverride, onRevertOverride, onCancel, onDelete, onSkip, isSkipped, isRecurring, hasOverride }) {
+  const [editScope, setEditScope] = useState(hasOverride ? "week" : "week");
   const [time, setTime] = useState(item?.time || "");
   const [endTime, setEndTime] = useState(item?.endTime || "");
   const [text, setText] = useState(item?.text || "");
@@ -401,9 +402,32 @@ function ScheduleItemForm({ item, onSave, onCancel, onDelete, onSkip, isSkipped,
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
   const showsAsSession = text.toLowerCase().includes("session") && category === "Client";
+  const isWeekScope = isRecurring && editScope === "week";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 16, fontWeight: 500 }}>{item ? "Edit event" : "New event"}</div>
+      {item && isRecurring && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "#666663" }}>Editing:</span>
+          {["week", "all"].map(scope => (
+            <button key={scope} onClick={() => setEditScope(scope)} style={{
+              fontSize: 12, padding: "4px 10px",
+              background: editScope === scope ? "#E6F1FB" : "transparent",
+              color: editScope === scope ? "#185FA5" : "#666663",
+              borderColor: editScope === scope ? "#85B7EB" : undefined,
+            }}>{scope === "week" ? "This week" : "All weeks"}</button>
+          ))}
+          {hasOverride && (
+            <button onClick={onRevertOverride} style={{
+              fontSize: 11, padding: "3px 8px", marginLeft: "auto",
+              background: "transparent", color: "#999996", borderColor: "#d4d3d0",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.color = "#854F0B"; e.currentTarget.style.background = "#FAEEDA"; }}
+              onMouseLeave={e => { e.currentTarget.style.color = "#999996"; e.currentTarget.style.background = "transparent"; }}
+            >Revert</button>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8 }}>
         <input ref={inputRef} placeholder="Start (e.g. 9:00am)" value={time} onChange={e => setTime(e.target.value)} style={{ flex: 1 }} />
         <input placeholder="End (optional)" value={endTime} onChange={e => setEndTime(e.target.value)} style={{ flex: 1 }} />
@@ -411,49 +435,65 @@ function ScheduleItemForm({ item, onSave, onCancel, onDelete, onSkip, isSkipped,
       <input placeholder="Description" value={text} onChange={e => setText(e.target.value)} />
       <input placeholder="Notes (Zoom link, address, etc.)" value={notes} onChange={e => setNotes(e.target.value)}
         style={{ fontSize: 13, color: "#666663" }} />
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <span style={{ fontSize: 13, color: "#666663" }}>Type:</span>
-        {EVENT_CATEGORIES.map(c => {
-          const cc = EVENT_CAT_COLORS[c];
-          return (
-            <button key={c} onClick={() => setCategory(c)} style={{
+      {!isWeekScope && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ fontSize: 13, color: "#666663" }}>Type:</span>
+          {EVENT_CATEGORIES.map(c => {
+            const cc = EVENT_CAT_COLORS[c];
+            return (
+              <button key={c} onClick={() => setCategory(c)} style={{
+                fontSize: 12, padding: "4px 10px",
+                background: category === c ? cc.light : "transparent",
+                color: category === c ? cc.text : "#666663",
+                borderColor: category === c ? cc.text : undefined,
+              }}>{c}</button>
+            );
+          })}
+        </div>
+      )}
+      {!isWeekScope && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ fontSize: 13, color: "#666663" }}>Repeats:</span>
+          {RECURRENCE_OPTIONS.map(r => (
+            <button key={r} onClick={() => setRecurrence(r)} style={{
               fontSize: 12, padding: "4px 10px",
-              background: category === c ? cc.light : "transparent",
-              color: category === c ? cc.text : "#666663",
-              borderColor: category === c ? cc.text : undefined,
-            }}>{c}</button>
-          );
-        })}
-      </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <span style={{ fontSize: 13, color: "#666663" }}>Repeats:</span>
-        {RECURRENCE_OPTIONS.map(r => (
-          <button key={r} onClick={() => setRecurrence(r)} style={{
-            fontSize: 12, padding: "4px 10px",
-            background: recurrence === r ? "#E6F1FB" : "transparent",
-            color: recurrence === r ? "#185FA5" : "#666663",
-            borderColor: recurrence === r ? "#85B7EB" : undefined,
-          }}>{r === "none" ? "One-time" : r === "weekly" ? "Weekly" : "Biweekly"}</button>
-        ))}
-      </div>
-      {showsAsSession && (
+              background: recurrence === r ? "#E6F1FB" : "transparent",
+              color: recurrence === r ? "#185FA5" : "#666663",
+              borderColor: recurrence === r ? "#85B7EB" : undefined,
+            }}>{r === "none" ? "One-time" : r === "weekly" ? "Weekly" : "Biweekly"}</button>
+          ))}
+        </div>
+      )}
+      {showsAsSession && !isWeekScope && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666663", cursor: "pointer" }}>
           <input type="checkbox" checked={excludeFromTasks} onChange={e => setExcludeFromTasks(e.target.checked)} />
           No progress note needed
         </label>
       )}
+      {isWeekScope && (
+        <div style={{ fontSize: 11, color: "#999996", fontStyle: "italic" }}>
+          Changes apply to this week only. Category and recurrence can only be changed when editing all weeks.
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-        {item && onDelete && <button onClick={onDelete} style={{ color: "#A32D2D", borderColor: "#F09595", marginRight: "auto" }}>Delete</button>}
+        {item && onDelete && !isWeekScope && <button onClick={onDelete} style={{ color: "#A32D2D", borderColor: "#F09595", marginRight: "auto" }}>Delete</button>}
         {item && isRecurring && onSkip && (
           <button onClick={onSkip} style={{
-            fontSize: 12, padding: "4px 10px", marginRight: "auto",
+            fontSize: 12, padding: "4px 10px", marginRight: item && onDelete && !isWeekScope ? 0 : "auto",
             background: isSkipped ? "#EAF3DE" : "#FAEEDA",
             color: isSkipped ? "#3B6D11" : "#854F0B",
             borderColor: isSkipped ? "#C0DD97" : "#FAC775",
           }}>{isSkipped ? "Unskip this week" : "Skip this week"}</button>
         )}
         <button onClick={onCancel}>Cancel</button>
-        <button onClick={() => { if (text.trim()) onSave({ time, endTime, text, notes, recurrence, category, excludeFromTasks }); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
+        <button onClick={() => {
+          if (!text.trim()) return;
+          if (isWeekScope) {
+            onSaveOverride({ time, endTime, text, notes });
+          } else {
+            onSave({ time, endTime, text, notes, recurrence, category, excludeFromTasks });
+          }
+        }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
       </div>
     </div>
   );
@@ -582,6 +622,34 @@ export default function Planner() {
     }));
     persist({ ...data, schedule: { ...data.schedule, [dayKey]: items } });
     setModal(null);
+  };
+
+  const saveScheduleOverride = (dayKey, itemId, overrideFields) => {
+    const items = data.schedule[dayKey].map(it => {
+      if (it.id !== itemId) return it;
+      const weekOverrides = { ...(it.weekOverrides || {}) };
+      weekOverrides[viewingMonday] = overrideFields;
+      return { ...it, weekOverrides };
+    });
+    persist({ ...data, schedule: { ...data.schedule, [dayKey]: items } });
+    setModal(null);
+  };
+
+  const revertScheduleOverride = (dayKey, itemId) => {
+    const items = data.schedule[dayKey].map(it => {
+      if (it.id !== itemId) return it;
+      const weekOverrides = { ...(it.weekOverrides || {}) };
+      delete weekOverrides[viewingMonday];
+      return { ...it, weekOverrides };
+    });
+    persist({ ...data, schedule: { ...data.schedule, [dayKey]: items } });
+    setModal(null);
+  };
+
+  const getEffectiveEvent = (item) => {
+    const override = item.weekOverrides?.[viewingMonday];
+    if (!override) return item;
+    return { ...item, ...override };
   };
 
   const deleteScheduleItem = (dayKey, itemId) => {
@@ -818,7 +886,7 @@ export default function Planner() {
               if (item.recurrence === "none") { if (!item.eventDate) return weekOffset === 0; return item.eventDate === viewingMonday; }
               return true;
             });
-            const items = sortByTime(visibleItems);
+            const items = sortByTime(visibleItems.map(getEffectiveEvent));
             const isItemSkipped = (item) => item.skipDates && item.skipDates.includes(viewingMonday);
             return (
               <div key={day} style={{ background: today ? "#E6F1FB" : "#f8f8f6", borderRadius: "8px", padding: "8px 10px", border: today ? "0.5px solid #85B7EB" : "0.5px solid #d4d3d0", minHeight: 90 }}>
@@ -831,6 +899,7 @@ export default function Planner() {
                 </div>
                 {items.map(item => {
                   const skipped = isItemSkipped(item);
+                  const hasOvr = item.weekOverrides?.[viewingMonday];
                   const catColor = EVENT_CAT_COLORS[item.category] || EVENT_CAT_COLORS.Personal;
                   return (
                     <div key={item.id} onClick={() => setModal({ type: "editSchedule", day, item })} style={{ fontSize: 12, lineHeight: 1.45, marginBottom: 4, cursor: "pointer", opacity: skipped ? 0.5 : 1, textDecoration: skipped ? "line-through" : "none", borderRadius: 4, padding: "2px 4px", margin: "0 -4px" }}
@@ -838,6 +907,7 @@ export default function Planner() {
                       <span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: 12, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}
                       <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
                       <RecurrenceTag recurrence={item.recurrence} />
+                      {hasOvr && !skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>✎</span>}
                     </div>
                   );
                 })}
@@ -902,7 +972,8 @@ export default function Planner() {
           {(() => {
             const autoTasks = [];
             DAYS.forEach(day => {
-              (data.schedule[day] || []).forEach(item => {
+              (data.schedule[day] || []).forEach(rawItem => {
+                const item = getEffectiveEvent(rawItem);
                 if (item.category !== "Client") return;
                 if (!item.text.toLowerCase().includes("session")) return;
                 if (item.excludeFromTasks) return;
@@ -1173,7 +1244,10 @@ export default function Planner() {
           <ScheduleItemForm item={modal.item}
             isRecurring={modal.item.recurrence !== "none"}
             isSkipped={modal.item.skipDates && modal.item.skipDates.includes(viewingMonday)}
+            hasOverride={!!modal.item.weekOverrides?.[viewingMonday]}
             onSave={updates => editScheduleItem(modal.day, modal.item.id, updates)}
+            onSaveOverride={overrideFields => saveScheduleOverride(modal.day, modal.item.id, overrideFields)}
+            onRevertOverride={() => revertScheduleOverride(modal.day, modal.item.id)}
             onCancel={() => setModal(null)}
             onDelete={() => deleteScheduleItem(modal.day, modal.item.id)}
             onSkip={() => toggleSkipScheduleItem(modal.day, modal.item.id)} />
