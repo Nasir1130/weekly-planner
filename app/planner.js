@@ -219,7 +219,7 @@ function Modal({ children, onClose }) {
         background: "#f5f5f4",
         border: "1px solid #b4b2a9",
         borderRadius: "12px",
-        padding: "1.5rem", width: "100%", maxWidth: 440,
+        padding: "1.5rem", width: "100%", maxWidth: 540,
         boxShadow: "0 8px 40px rgba(0,0,0,0.3)",
         position: "relative", zIndex: 1001,
         maxHeight: "90vh", overflowY: "auto",
@@ -394,6 +394,7 @@ function ScheduleItemForm({ item, onSave, onCancel, onDelete, onSkip, isSkipped,
   const [time, setTime] = useState(item?.time || "");
   const [endTime, setEndTime] = useState(item?.endTime || "");
   const [text, setText] = useState(item?.text || "");
+  const [notes, setNotes] = useState(item?.notes || "");
   const [recurrence, setRecurrence] = useState(item?.recurrence || "none");
   const [category, setCategory] = useState(item?.category || "Personal");
   const [excludeFromTasks, setExcludeFromTasks] = useState(item?.excludeFromTasks || false);
@@ -408,6 +409,8 @@ function ScheduleItemForm({ item, onSave, onCancel, onDelete, onSkip, isSkipped,
         <input placeholder="End (optional)" value={endTime} onChange={e => setEndTime(e.target.value)} style={{ flex: 1 }} />
       </div>
       <input placeholder="Description" value={text} onChange={e => setText(e.target.value)} />
+      <input placeholder="Notes (Zoom link, address, etc.)" value={notes} onChange={e => setNotes(e.target.value)}
+        style={{ fontSize: 13, color: "#666663" }} />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <span style={{ fontSize: 13, color: "#666663" }}>Type:</span>
         {EVENT_CATEGORIES.map(c => {
@@ -450,7 +453,7 @@ function ScheduleItemForm({ item, onSave, onCancel, onDelete, onSkip, isSkipped,
           }}>{isSkipped ? "Unskip this week" : "Skip this week"}</button>
         )}
         <button onClick={onCancel}>Cancel</button>
-        <button onClick={() => { if (text.trim()) onSave({ time, endTime, text, recurrence, category, excludeFromTasks }); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
+        <button onClick={() => { if (text.trim()) onSave({ time, endTime, text, notes, recurrence, category, excludeFromTasks }); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
       </div>
     </div>
   );
@@ -778,10 +781,18 @@ export default function Planner() {
 
       {/* ═══ WEEKLY SCHEDULE ═══ */}
       <div style={{ marginBottom: "1.5rem", paddingBottom: "1.5rem", borderBottom: "1.5px solid #d4d3d0" }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 10, gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: data.hideCalendar ? 0 : 10, gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
-            <div style={{ fontSize: 16, fontWeight: 500, color: "#1a1a1a", textTransform: "uppercase", letterSpacing: "0.06em", textDecoration: "underline" }}>
-              Weekly schedule
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: 16, fontWeight: 500, color: "#1a1a1a", textTransform: "uppercase", letterSpacing: "0.06em", textDecoration: "underline" }}>
+                Weekly schedule
+              </div>
+              <button onClick={() => persist({ ...data, hideCalendar: !data.hideCalendar })} style={{
+                fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
+              }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
+              >{data.hideCalendar ? "Show" : "Hide"}</button>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -796,7 +807,7 @@ export default function Planner() {
             <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ fontSize: 18, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
+        {!data.hideCalendar && <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
           {DAYS.map((day, i) => {
             const date = weekDates[i];
             const today = isToday(date);
@@ -828,13 +839,14 @@ export default function Planner() {
                       <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
                       <RecurrenceTag recurrence={item.recurrence} />
                       {skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>(skipped)</span>}
+                      {item.notes && !skipped && <div style={{ fontSize: 10, color: "#999996", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.notes}</div>}
                     </div>
                   );
                 })}
               </div>
             );
           })}
-        </div>
+        </div>}
       </div>
 
       {/* ═══ TAB SWITCHER ═══ */}
