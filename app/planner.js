@@ -839,7 +839,6 @@ export default function Planner() {
                       <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
                       <RecurrenceTag recurrence={item.recurrence} />
                       {skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>(skipped)</span>}
-                      {item.notes && !skipped && <div style={{ fontSize: 10, color: "#999996", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.notes}</div>}
                     </div>
                   );
                 })}
