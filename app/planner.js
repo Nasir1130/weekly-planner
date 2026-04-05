@@ -838,7 +838,6 @@ export default function Planner() {
                       <span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: 12, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}
                       <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
                       <RecurrenceTag recurrence={item.recurrence} />
-                      {skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>(skipped)</span>}
                     </div>
                   );
                 })}
