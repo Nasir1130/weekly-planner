@@ -240,6 +240,25 @@ function CollapseArrow({ collapsed }) {
   );
 }
 
+function Linkify({ children, style }) {
+  if (typeof children !== "string") return <span style={style}>{children}</span>;
+  const urlRegex = /(https?:\/\/[^\s<]+)/g;
+  const parts = children.split(urlRegex);
+  if (parts.length === 1) return <span style={style}>{children}</span>;
+  return (
+    <span style={style}>
+      {parts.map((part, i) =>
+        urlRegex.test(part) ? (
+          <a key={i} href={part} target="_blank" rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            style={{ color: "#185FA5", textDecoration: "underline", wordBreak: "break-all" }}
+          >{part.length > 40 ? part.slice(0, 37) + "..." : part}</a>
+        ) : <span key={i}>{part}</span>
+      )}
+    </span>
+  );
+}
+
 function RecurrenceTag({ recurrence }) {
   if (recurrence === "none") return null;
   return (
@@ -569,6 +588,18 @@ export default function Planner() {
   const [dragItem, setDragItem] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileDayIndex, setMobileDayIndex] = useState(() => {
+    const today = new Date().getDay();
+    return today === 0 ? 6 : today - 1; // Convert Sun=0 to Mon=0 index
+  });
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   useEffect(() => {
     loadData().then(loaded => {
@@ -576,6 +607,16 @@ export default function Planner() {
       setLoading(false);
     });
   }, []);
+
+  // Reset mobile day to today when returning to current week
+  useEffect(() => {
+    if (weekOffset === 0) {
+      const today = new Date().getDay();
+      setMobileDayIndex(today === 0 ? 6 : today - 1);
+    } else {
+      setMobileDayIndex(0);
+    }
+  }, [weekOffset]);
 
   const persist = useCallback((newData) => {
     setData(newData);
@@ -844,8 +885,83 @@ export default function Planner() {
 
   // ─── RENDER ────────────────────────────────────────────────────
 
+  // Helper to render a single day's events (shared between mobile and desktop)
+  const renderDayEvents = (day, date, opts = {}) => {
+    const { compact } = opts;
+    const today = isToday(date);
+    const allItems = data.schedule[day] || [];
+    const visibleItems = allItems.filter(item => {
+      if (item.recurrence === "weekly") return true;
+      if (item.recurrence === "biweekly") return isBiweeklyVisible(item.anchorDate, weekOffset);
+      if (item.recurrence === "none") { if (!item.eventDate) return weekOffset === 0; return item.eventDate === viewingMonday; }
+      return true;
+    });
+    const items = sortByTime(visibleItems.map(getEffectiveEvent));
+    const isItemSkipped = (item) => item.skipDates && item.skipDates.includes(viewingMonday);
+    const fontSize = compact ? 12 : 14;
+    const timeFontSize = compact ? 12 : 14;
+    return (
+      <div key={day} style={{
+        background: today ? "#E6F1FB" : "#f8f8f6", borderRadius: "8px",
+        padding: compact ? "8px 10px" : "12px 16px",
+        border: today ? "0.5px solid #85B7EB" : "0.5px solid #d4d3d0",
+        minHeight: compact ? 90 : 60,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: compact ? 6 : 8 }}>
+          <div>
+            <span style={{ fontSize: today ? 16 : 13, fontWeight: today ? 700 : 500, textDecoration: "underline", color: today ? "#185FA5" : "#1a1a1a" }}>{day}:</span>
+            <span style={{ fontSize: today ? 15 : 11, fontWeight: today ? 700 : 400, color: today ? "#185FA5" : "#999996", marginLeft: 3 }}>{formatDate(date)}</span>
+          </div>
+          <button onClick={() => setModal({ type: "addSchedule", day })} style={{ fontSize: 16, lineHeight: 1, padding: "0 4px", border: "none", background: "transparent", color: today ? "#185FA5" : "#999996", cursor: "pointer" }} title="Add event">+</button>
+        </div>
+        {items.length === 0 && !compact && (
+          <div style={{ fontSize: 13, color: "#999996", fontStyle: "italic", padding: "4px 0" }}>no events</div>
+        )}
+        {items.map(item => {
+          const skipped = isItemSkipped(item);
+          const hasOvr = item.weekOverrides?.[viewingMonday];
+          const catColor = EVENT_CAT_COLORS[item.category] || EVENT_CAT_COLORS.Personal;
+          return (
+            <div key={item.id} onClick={() => setModal({ type: "editSchedule", day, item })} style={{
+              fontSize, lineHeight: 1.5, marginBottom: compact ? 4 : 6, cursor: "pointer",
+              opacity: skipped ? 0.5 : 1, textDecoration: skipped ? "line-through" : "none",
+              borderRadius: 4, padding: compact ? "2px 4px" : "4px 8px", margin: "0 -4px",
+            }}
+              onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: timeFontSize, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}
+              <Linkify style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</Linkify>
+              <RecurrenceTag recurrence={item.recurrence} />
+              {hasOvr && !skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>✎</span>}
+              {item.notes && !compact && !skipped && (
+                <div style={{ fontSize: 12, color: "#999996", marginTop: 2 }}>
+                  <Linkify style={{ color: "#999996" }}>{item.notes}</Linkify>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const mobileDayNav = (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 8 }}>
+      <button onClick={() => {
+        if (mobileDayIndex > 0) setMobileDayIndex(mobileDayIndex - 1);
+        else { setWeekOffset(weekOffset - 1); setMobileDayIndex(6); }
+      }} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
+      <span style={{ fontSize: 16, fontWeight: 600, color: "#1a1a1a", minWidth: 100, textAlign: "center" }}>
+        {DAYS[mobileDayIndex]} {formatDate(weekDates[mobileDayIndex])}
+      </span>
+      <button onClick={() => {
+        if (mobileDayIndex < 6) setMobileDayIndex(mobileDayIndex + 1);
+        else { setWeekOffset(weekOffset + 1); setMobileDayIndex(0); }
+      }} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
+    </div>
+  );
+
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif", maxWidth: 960, margin: "0 auto", padding: "0.5rem 0 2rem" }}>
+    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif", maxWidth: 960, margin: "0 auto", padding: isMobile ? "0.25rem 0.5rem 2rem" : "0.5rem 0 2rem" }}>
 
       {/* ═══ WEEKLY SCHEDULE ═══ */}
       <div style={{ marginBottom: "1.5rem", paddingBottom: "1.5rem", borderBottom: "1.5px solid #d4d3d0" }}>
@@ -853,7 +969,7 @@ export default function Planner() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <div style={{ fontSize: 16, fontWeight: 500, color: "#1a1a1a", textTransform: "uppercase", letterSpacing: "0.06em", textDecoration: "underline" }}>
-                Weekly schedule
+                {isMobile ? "Schedule" : "Weekly schedule"}
               </div>
               <button onClick={() => persist({ ...data, hideCalendar: !data.hideCalendar })} style={{
                 fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
@@ -863,6 +979,7 @@ export default function Planner() {
               >{data.hideCalendar ? "Show" : "Hide"}</button>
             </div>
           </div>
+          {/* Week navigation */}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ fontSize: 18, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
             {weekOffset !== 0 && (
@@ -874,47 +991,19 @@ export default function Planner() {
             </span>
             <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ fontSize: 18, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
           </div>
+          {/* Mobile day navigation */}
+          {isMobile && !data.hideCalendar && mobileDayNav}
         </div>
-        {!data.hideCalendar && <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
-          {DAYS.map((day, i) => {
-            const date = weekDates[i];
-            const today = isToday(date);
-            const allItems = data.schedule[day] || [];
-            const visibleItems = allItems.filter(item => {
-              if (item.recurrence === "weekly") return true;
-              if (item.recurrence === "biweekly") return isBiweeklyVisible(item.anchorDate, weekOffset);
-              if (item.recurrence === "none") { if (!item.eventDate) return weekOffset === 0; return item.eventDate === viewingMonday; }
-              return true;
-            });
-            const items = sortByTime(visibleItems.map(getEffectiveEvent));
-            const isItemSkipped = (item) => item.skipDates && item.skipDates.includes(viewingMonday);
-            return (
-              <div key={day} style={{ background: today ? "#E6F1FB" : "#f8f8f6", borderRadius: "8px", padding: "8px 10px", border: today ? "0.5px solid #85B7EB" : "0.5px solid #d4d3d0", minHeight: 90 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <div>
-                    <span style={{ fontSize: today ? 16 : 13, fontWeight: today ? 700 : 500, textDecoration: "underline", color: today ? "#185FA5" : "#1a1a1a" }}>{day}:</span>
-                    <span style={{ fontSize: today ? 15 : 11, fontWeight: today ? 700 : 400, color: today ? "#185FA5" : "#999996", marginLeft: 3 }}>{formatDate(date)}</span>
-                  </div>
-                  <button onClick={() => setModal({ type: "addSchedule", day })} style={{ fontSize: 16, lineHeight: 1, padding: "0 4px", border: "none", background: "transparent", color: today ? "#185FA5" : "#999996", cursor: "pointer" }} title="Add event">+</button>
-                </div>
-                {items.map(item => {
-                  const skipped = isItemSkipped(item);
-                  const hasOvr = item.weekOverrides?.[viewingMonday];
-                  const catColor = EVENT_CAT_COLORS[item.category] || EVENT_CAT_COLORS.Personal;
-                  return (
-                    <div key={item.id} onClick={() => setModal({ type: "editSchedule", day, item })} style={{ fontSize: 12, lineHeight: 1.45, marginBottom: 4, cursor: "pointer", opacity: skipped ? 0.5 : 1, textDecoration: skipped ? "line-through" : "none", borderRadius: 4, padding: "2px 4px", margin: "0 -4px" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: 12, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}
-                      <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
-                      <RecurrenceTag recurrence={item.recurrence} />
-                      {hasOvr && !skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>✎</span>}
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>}
+        {/* Desktop: 7-column grid */}
+        {!data.hideCalendar && !isMobile && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
+            {DAYS.map((day, i) => renderDayEvents(day, weekDates[i], { compact: true }))}
+          </div>
+        )}
+        {/* Mobile: single day view */}
+        {!data.hideCalendar && isMobile && (
+          renderDayEvents(DAYS[mobileDayIndex], weekDates[mobileDayIndex], { compact: false })
+        )}
       </div>
 
       {/* ═══ TAB SWITCHER ═══ */}
@@ -1037,7 +1126,7 @@ export default function Planner() {
               <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>Anytime — by priority</span>
             </div>
             {!data.collapsed.anytime && (
-              <div style={{ paddingTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px" }}>
+              <div style={{ paddingTop: 8, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "4px 16px" }}>
                 {[["Very High", "High"], ["Med", "Low"]].map(row => row.map(priority => {
                   const pc = priorityColors[priority];
                   const items = data.todos.priority[priority] || [];
@@ -1209,7 +1298,7 @@ export default function Planner() {
                         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
                       >
                         <div style={{ fontSize: 13, lineHeight: 1.65, color: "#1a1a1a", whiteSpace: "pre-wrap" }}>
-                          {entry.text}
+                          <Linkify>{entry.text}</Linkify>
                         </div>
                         <div style={{ fontSize: 11, color: cc.text, marginTop: 6, opacity: 0.7 }}>
                           {formatNoteTimestamp(entry.createdAt)}
