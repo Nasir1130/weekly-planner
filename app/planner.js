@@ -454,6 +454,15 @@ function ScheduleItemForm({ item, onSave, onSaveOverride, onRevertOverride, onCa
       <input placeholder="Description" value={text} onChange={e => setText(e.target.value)} />
       <input placeholder="Notes (Zoom link, address, etc.)" value={notes} onChange={e => setNotes(e.target.value)}
         style={{ fontSize: 13, color: "#666663" }} />
+      {notes && /(https?:\/\/[^\s<]+)/.test(notes) && (
+        <div style={{ fontSize: 12, padding: "4px 0" }}>
+          {notes.match(/(https?:\/\/[^\s<]+)/g).map((url, i) => (
+            <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+              style={{ color: "#185FA5", textDecoration: "underline", display: "block", marginBottom: 2, wordBreak: "break-all" }}
+            >{url.length > 60 ? url.slice(0, 57) + "..." : url}</a>
+          ))}
+        </div>
+      )}
       {!isWeekScope && (
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span style={{ fontSize: 13, color: "#666663" }}>Type:</span>
@@ -929,12 +938,15 @@ export default function Planner() {
             }}
               onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
               <span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: timeFontSize, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}
-              <Linkify style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</Linkify>
+              {compact
+                ? <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
+                : <Linkify style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</Linkify>
+              }
               <RecurrenceTag recurrence={item.recurrence} />
               {hasOvr && !skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>✎</span>}
               {item.notes && !compact && !skipped && (
                 <div style={{ fontSize: 12, color: "#999996", marginTop: 2 }}>
-                  <Linkify style={{ color: "#999996" }}>{item.notes}</Linkify>
+                  <Linkify style={{ color: "#185FA5" }}>{item.notes}</Linkify>
                 </div>
               )}
             </div>
