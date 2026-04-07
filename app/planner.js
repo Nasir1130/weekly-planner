@@ -219,7 +219,7 @@ function Modal({ children, onClose }) {
         background: "#f5f5f4",
         border: "1px solid #b4b2a9",
         borderRadius: "12px",
-        padding: "1.5rem", width: "100%", maxWidth: 540,
+        padding: "1.5rem", width: "100%", maxWidth: 640,
         boxShadow: "0 8px 40px rgba(0,0,0,0.3)",
         position: "relative", zIndex: 1001,
         maxHeight: "90vh", overflowY: "auto",
@@ -562,22 +562,14 @@ function NoteEntryForm({ entry, onSave, onCancel, onDelete }) {
   const [text, setText] = useState(entry?.text || "");
   const textRef = useRef(null);
   useEffect(() => {
-    if (textRef.current) {
-      textRef.current.focus();
-      textRef.current.style.height = "auto";
-      textRef.current.style.height = textRef.current.scrollHeight + "px";
-    }
+    if (textRef.current) textRef.current.focus();
   }, []);
-  const autoResize = (e) => {
-    e.target.style.height = "auto";
-    e.target.style.height = e.target.scrollHeight + "px";
-  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 16, fontWeight: 500 }}>{entry ? "Edit note" : "New note"}</div>
       <textarea ref={textRef} placeholder="Write your thoughts..." value={text}
-        onChange={e => { setText(e.target.value); autoResize(e); }}
-        style={{ fontSize: 14, padding: "10px", minHeight: 120, resize: "vertical", lineHeight: 1.6,
+        onChange={e => setText(e.target.value)}
+        style={{ fontSize: 14, padding: "10px", minHeight: 180, resize: "vertical", lineHeight: 1.6,
           borderRadius: 8, border: "1px solid #d4d3d0", fontFamily: "inherit" }} />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
         {entry && onDelete && <button onClick={onDelete} style={{ color: "#A32D2D", borderColor: "#F09595", marginRight: "auto" }}>Delete</button>}
