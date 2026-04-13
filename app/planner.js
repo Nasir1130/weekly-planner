@@ -409,12 +409,13 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
 
 // ─── FORM COMPONENTS ─────────────────────────────────────────────
 
-function ScheduleItemForm({ item, onSave, onSaveOverride, onRevertOverride, onCancel, onDelete, onSkip, isSkipped, isRecurring, hasOverride }) {
+function ScheduleItemForm({ item, dayKey, onSave, onSaveOverride, onRevertOverride, onCancel, onDelete, onSkip, isSkipped, isRecurring, hasOverride }) {
   const [editScope, setEditScope] = useState(hasOverride ? "week" : "week");
   const [time, setTime] = useState(item?.time || "");
   const [endTime, setEndTime] = useState(item?.endTime || "");
   const [text, setText] = useState(item?.text || "");
   const [notes, setNotes] = useState(item?.notes || "");
+  const [day, setDay] = useState(dayKey || "Mon");
   const [recurrence, setRecurrence] = useState(item?.recurrence || "none");
   const [category, setCategory] = useState(item?.category || "Personal");
   const [excludeFromTasks, setExcludeFromTasks] = useState(item?.excludeFromTasks || false);
@@ -426,7 +427,7 @@ function ScheduleItemForm({ item, onSave, onSaveOverride, onRevertOverride, onCa
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 16, fontWeight: 500 }}>{item ? "Edit event" : "New event"}</div>
       {item && isRecurring && (
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           <span style={{ fontSize: 12, color: "#666663" }}>Editing:</span>
           {["week", "all"].map(scope => (
             <button key={scope} onClick={() => setEditScope(scope)} style={{
@@ -445,6 +446,19 @@ function ScheduleItemForm({ item, onSave, onSaveOverride, onRevertOverride, onCa
               onMouseLeave={e => { e.currentTarget.style.color = "#999996"; e.currentTarget.style.background = "transparent"; }}
             >Revert</button>
           )}
+        </div>
+      )}
+      {isWeekScope && (
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "#666663", marginRight: 2 }}>Day:</span>
+          {DAYS.map(d => (
+            <button key={d} onClick={() => setDay(d)} style={{
+              fontSize: 11, padding: "3px 8px",
+              background: day === d ? "#E6F1FB" : "transparent",
+              color: day === d ? "#185FA5" : "#666663",
+              borderColor: day === d ? "#85B7EB" : undefined,
+            }}>{d}</button>
+          ))}
         </div>
       )}
       <div style={{ display: "flex", gap: 8 }}>
@@ -517,7 +531,7 @@ function ScheduleItemForm({ item, onSave, onSaveOverride, onRevertOverride, onCa
         <button onClick={() => {
           if (!text.trim()) return;
           if (isWeekScope) {
-            onSaveOverride({ time, endTime, text, notes });
+            onSaveOverride({ time, endTime, text, notes, day });
           } else {
             onSave({ time, endTime, text, notes, recurrence, category, excludeFromTasks });
           }
@@ -890,14 +904,40 @@ export default function Planner() {
   const renderDayEvents = (day, date, opts = {}) => {
     const { compact } = opts;
     const today = isToday(date);
-    const allItems = data.schedule[day] || [];
-    const visibleItems = allItems.filter(item => {
+
+    // 1. Get this day's own events, filtered for visibility
+    const ownItems = (data.schedule[day] || []).filter(item => {
       if (item.recurrence === "weekly") return true;
       if (item.recurrence === "biweekly") return isBiweeklyVisible(item.anchorDate, weekOffset);
       if (item.recurrence === "none") { if (!item.eventDate) return weekOffset === 0; return item.eventDate === viewingMonday; }
       return true;
     });
-    const items = sortByTime(visibleItems.map(getEffectiveEvent));
+
+    // 2. Exclude events that have a day override moving them AWAY from this day
+    const stayingItems = ownItems.filter(item => {
+      const ovr = item.weekOverrides?.[viewingMonday];
+      if (ovr && ovr.day && ovr.day !== day) return false; // moved away
+      return true;
+    });
+
+    // 3. Gather events from OTHER days that have a day override moving them TO this day
+    const movedInItems = [];
+    DAYS.forEach(otherDay => {
+      if (otherDay === day) return;
+      (data.schedule[otherDay] || []).forEach(item => {
+        // Must be a recurring/visible event
+        if (item.recurrence === "none") return;
+        if (item.recurrence === "biweekly" && !isBiweeklyVisible(item.anchorDate, weekOffset)) return;
+        const ovr = item.weekOverrides?.[viewingMonday];
+        if (ovr && ovr.day === day) {
+          movedInItems.push({ ...item, _sourceDay: otherDay });
+        }
+      });
+    });
+
+    // 4. Combine and apply effective overrides, then sort
+    const allItems = [...stayingItems, ...movedInItems];
+    const items = sortByTime(allItems.map(getEffectiveEvent));
     const isItemSkipped = (item) => item.skipDates && item.skipDates.includes(viewingMonday);
     const fontSize = compact ? 12 : 14;
     const timeFontSize = compact ? 12 : 14;
@@ -922,8 +962,9 @@ export default function Planner() {
           const skipped = isItemSkipped(item);
           const hasOvr = item.weekOverrides?.[viewingMonday];
           const catColor = EVENT_CAT_COLORS[item.category] || EVENT_CAT_COLORS.Personal;
+          const sourceDay = item._sourceDay || day;
           return (
-            <div key={item.id} onClick={() => setModal({ type: "editSchedule", day, item })} style={{
+            <div key={item.id} onClick={() => setModal({ type: "editSchedule", day: sourceDay, displayDay: day, item })} style={{
               fontSize, lineHeight: 1.5, marginBottom: compact ? 4 : 6, cursor: "pointer",
               opacity: skipped ? 0.5 : 1, textDecoration: skipped ? "line-through" : "none",
               borderRadius: 4, padding: compact ? "2px 4px" : "4px 8px", margin: "0 -4px",
@@ -1067,13 +1108,14 @@ export default function Planner() {
             DAYS.forEach(day => {
               (data.schedule[day] || []).forEach(rawItem => {
                 const item = getEffectiveEvent(rawItem);
+                const effectiveDay = item.weekOverrides?.[viewingMonday]?.day || day;
                 if (item.category !== "Client") return;
                 if (!item.text.toLowerCase().includes("session")) return;
                 if (item.excludeFromTasks) return;
                 if (item.recurrence === "none" && item.eventDate !== viewingMonday) return;
                 if (item.recurrence === "biweekly" && !isBiweeklyVisible(item.anchorDate, weekOffset)) return;
                 if (item.skipDates && item.skipDates.includes(viewingMonday)) return;
-                autoTasks.push({ id: "auto_" + item.id, text: item.text + " — progress note", sourceId: item.id, day });
+                autoTasks.push({ id: "auto_" + item.id, text: item.text + " — progress note", sourceId: item.id, day: effectiveDay });
               });
             });
             const manualTasks = data.manualWeeklyTasks || [];
@@ -1335,6 +1377,7 @@ export default function Planner() {
       {modal?.type === "editSchedule" && (
         <Modal onClose={() => setModal(null)}>
           <ScheduleItemForm item={modal.item}
+            dayKey={modal.displayDay || modal.day}
             isRecurring={modal.item.recurrence !== "none"}
             isSkipped={modal.item.skipDates && modal.item.skipDates.includes(viewingMonday)}
             hasOverride={!!modal.item.weekOverrides?.[viewingMonday]}
