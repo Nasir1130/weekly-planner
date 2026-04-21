@@ -606,8 +606,40 @@ export default function Planner() {
   const [isMobile, setIsMobile] = useState(false);
   const [mobileDayIndex, setMobileDayIndex] = useState(() => {
     const today = new Date().getDay();
-    return today === 0 ? 6 : today - 1; // Convert Sun=0 to Mon=0 index
+    return today === 0 ? 6 : today - 1;
   });
+  const [selectionPopup, setSelectionPopup] = useState(null); // { text, x, y, showCategories }
+
+  // Handle text selection in notes for "Add to-do" popup
+  useEffect(() => {
+    const handleMouseUp = (e) => {
+      // Only trigger inside note entries
+      const noteEl = e.target.closest('[data-note-entry]');
+      if (!noteEl) {
+        // Clicked outside notes — hide popup if not clicking on the popup itself
+        if (!e.target.closest('[data-selection-popup]')) {
+          setSelectionPopup(null);
+        }
+        return;
+      }
+      const sel = window.getSelection();
+      const text = sel?.toString().trim();
+      if (!text) {
+        setSelectionPopup(null);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      setSelectionPopup({
+        text,
+        x: rect.left + rect.width / 2,
+        y: rect.top - 8,
+        showCategories: false,
+      });
+    };
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => document.removeEventListener("mouseup", handleMouseUp);
+  }, []);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -1332,14 +1364,19 @@ export default function Planner() {
                       </div>
                     )}
                     {entries.map(entry => (
-                      <div key={entry.id} style={{
+                      <div key={entry.id} data-note-entry="true" style={{
                         padding: "10px 14px", marginBottom: 8,
                         background: cc.bg, borderRadius: 8,
                         borderLeft: `3px solid ${cc.text}`,
                         cursor: "pointer",
                         transition: "box-shadow 0.15s",
                       }}
-                        onClick={() => setModal({ type: "editNote", category: cat, entry })}
+                        onClick={(e) => {
+                          // Don't open edit modal if user is selecting text
+                          const sel = window.getSelection();
+                          if (sel && sel.toString().trim().length > 0) return;
+                          setModal({ type: "editNote", category: cat, entry });
+                        }}
                         onMouseEnter={e => e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)"}
                         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
                       >
@@ -1365,6 +1402,73 @@ export default function Planner() {
               No categories yet. Click ⚙ Categories to add some.
             </div>
           )}
+        </div>
+      )}
+
+      {/* ═══ SELECTION POPUP (notes → to-do) ═══ */}
+      {selectionPopup && (
+        <div data-selection-popup="true" style={{
+          position: "fixed",
+          left: selectionPopup.x,
+          top: selectionPopup.y,
+          transform: "translate(-50%, -100%)",
+          zIndex: 999,
+          background: "#1a1a1a",
+          borderRadius: 8,
+          padding: selectionPopup.showCategories ? "8px 4px" : "4px 4px",
+          boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
+          display: "flex",
+          flexDirection: selectionPopup.showCategories ? "column" : "row",
+          gap: 2,
+          minWidth: selectionPopup.showCategories ? 140 : undefined,
+        }}>
+          {!selectionPopup.showCategories ? (
+            <button
+              onClick={() => setSelectionPopup({ ...selectionPopup, showCategories: true })}
+              style={{
+                fontSize: 12, padding: "5px 12px", border: "none",
+                background: "transparent", color: "#fff", cursor: "pointer",
+                borderRadius: 6, whiteSpace: "nowrap",
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.15)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >+ Add to-do</button>
+          ) : (
+            <>
+              <div style={{ fontSize: 10, color: "#999996", padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Add to category:</div>
+              {[...PRIORITIES, ...flatCategories].map(cat => {
+                const isPriority = PRIORITIES.includes(cat);
+                return (
+                  <button key={cat} onClick={() => {
+                    const section = isPriority ? "priority" : "flat";
+                    const newItem = { id: uid(), text: selectionPopup.text, bold: false, checked: false };
+                    const newTodos = JSON.parse(JSON.stringify(data.todos));
+                    if (section === "priority") {
+                      newTodos.priority[cat] = [...(newTodos.priority[cat] || []), newItem];
+                    } else {
+                      newTodos.flat[cat] = [...(newTodos.flat[cat] || []), newItem];
+                    }
+                    persist({ ...data, todos: newTodos });
+                    setSelectionPopup(null);
+                    window.getSelection()?.removeAllRanges();
+                  }} style={{
+                    fontSize: 12, padding: "5px 10px", border: "none",
+                    background: "transparent", color: "#fff", cursor: "pointer",
+                    borderRadius: 6, textAlign: "left", whiteSpace: "nowrap",
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.15)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  >{isPriority ? `⚡ ${cat}` : cat}</button>
+                );
+              })}
+            </>
+          )}
+          <div style={{
+            position: "absolute", bottom: -6, left: "50%", transform: "translateX(-50%)",
+            width: 0, height: 0,
+            borderLeft: "6px solid transparent", borderRight: "6px solid transparent",
+            borderTop: "6px solid #1a1a1a",
+          }} />
         </div>
       )}
 
