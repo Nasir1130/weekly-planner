@@ -609,37 +609,47 @@ export default function Planner() {
     return today === 0 ? 6 : today - 1;
   });
   const [selectionPopup, setSelectionPopup] = useState(null); // { text, x, y, showCategories }
+  const notesContainerRef = useRef(null);
 
   // Handle text selection in notes for "Add to-do" popup
   useEffect(() => {
-    const handleMouseUp = (e) => {
-      // Only trigger inside note entries
-      const noteEl = e.target.closest('[data-note-entry]');
-      if (!noteEl) {
-        // Clicked outside notes — hide popup if not clicking on the popup itself
-        if (!e.target.closest('[data-selection-popup]')) {
-          setSelectionPopup(null);
+    const handleMouseUp = () => {
+      // Small delay to let the browser finalize the selection
+      setTimeout(() => {
+        const sel = window.getSelection();
+        const text = sel?.toString().trim();
+        if (!text || !sel.rangeCount) {
+          // Don't dismiss if clicking on the popup itself
+          return;
         }
-        return;
-      }
-      const sel = window.getSelection();
-      const text = sel?.toString().trim();
-      if (!text) {
+        // Check if selection is within the notes container
+        const range = sel.getRangeAt(0);
+        const container = notesContainerRef.current;
+        if (!container || !container.contains(range.startContainer)) {
+          return;
+        }
+        const rect = range.getBoundingClientRect();
+        setSelectionPopup({
+          text,
+          x: rect.left + rect.width / 2,
+          y: rect.top - 8,
+          showCategories: false,
+        });
+      }, 10);
+    };
+    const handleMouseDown = (e) => {
+      // Dismiss popup if clicking outside it
+      if (selectionPopup && !e.target.closest('[data-selection-popup]')) {
         setSelectionPopup(null);
-        return;
       }
-      const range = sel.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-      setSelectionPopup({
-        text,
-        x: rect.left + rect.width / 2,
-        y: rect.top - 8,
-        showCategories: false,
-      });
     };
     document.addEventListener("mouseup", handleMouseUp);
-    return () => document.removeEventListener("mouseup", handleMouseUp);
-  }, []);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [selectionPopup]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -1316,7 +1326,7 @@ export default function Planner() {
 
       {/* ═══ NOTES TAB ═══ */}
       {activeTab === "notes" && (
-        <div>
+        <div ref={notesContainerRef}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
             <button onClick={() => setModal({ type: "manageNoteCategories" })} style={{
               fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
