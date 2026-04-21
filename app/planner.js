@@ -259,6 +259,52 @@ function Linkify({ children, style }) {
   );
 }
 
+function FormattedText({ children }) {
+  if (typeof children !== "string") return <span>{children}</span>;
+  // Split by formatting markers: **bold** and __underline__
+  // Process line by line to preserve whitespace/newlines
+  const formatLine = (line, lineIdx) => {
+    // Regex to match **bold** and __underline__ patterns
+    const regex = /(\*\*(.+?)\*\*|__(.+?)__)/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = regex.exec(line)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push({ type: "text", content: line.slice(lastIndex, match.index) });
+      }
+      if (match[2]) {
+        parts.push({ type: "bold", content: match[2] });
+      } else if (match[3]) {
+        parts.push({ type: "underline", content: match[3] });
+      }
+      lastIndex = regex.lastIndex;
+    }
+    if (lastIndex < line.length) {
+      parts.push({ type: "text", content: line.slice(lastIndex) });
+    }
+    if (parts.length === 0) parts.push({ type: "text", content: line });
+    return parts.map((part, i) => {
+      const key = `${lineIdx}-${i}`;
+      // Apply linkify to each text segment
+      if (part.type === "bold") return <strong key={key}><Linkify>{part.content}</Linkify></strong>;
+      if (part.type === "underline") return <span key={key} style={{ textDecoration: "underline" }}><Linkify>{part.content}</Linkify></span>;
+      return <Linkify key={key}>{part.content}</Linkify>;
+    });
+  };
+  const lines = children.split("\n");
+  return (
+    <span>
+      {lines.map((line, i) => (
+        <span key={i}>
+          {i > 0 && "\n"}
+          {formatLine(line, i)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function RecurrenceTag({ recurrence }) {
   if (recurrence === "none") return null;
   return (
@@ -574,18 +620,37 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories }) {
 
 function NoteEntryForm({ entry, onSave, onCancel, onDelete, todoCategories, onAddTodo }) {
   const [text, setText] = useState(entry?.text || "");
-  const [todoPicker, setTodoPicker] = useState(null); // { text } when showing category picker
-  const [todoConfirm, setTodoConfirm] = useState(null); // brief confirmation message
+  const [todoPicker, setTodoPicker] = useState(null);
+  const [todoConfirm, setTodoConfirm] = useState(null);
   const textRef = useRef(null);
   useEffect(() => {
     if (textRef.current) textRef.current.focus();
   }, []);
+  const wrapSelection = (marker) => {
+    const ta = textRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start === end) return;
+    const selected = text.slice(start, end);
+    const before = text.slice(0, start);
+    const after = text.slice(end);
+    if (before.endsWith(marker) && after.startsWith(marker)) {
+      const newText = before.slice(0, -marker.length) + selected + after.slice(marker.length);
+      setText(newText);
+      setTimeout(() => { ta.selectionStart = start - marker.length; ta.selectionEnd = end - marker.length; ta.focus(); }, 0);
+    } else {
+      const newText = before + marker + selected + marker + after;
+      setText(newText);
+      setTimeout(() => { ta.selectionStart = start + marker.length; ta.selectionEnd = end + marker.length; ta.focus(); }, 0);
+    }
+  };
   const handleCreateTodo = () => {
     if (!textRef.current) return;
     const start = textRef.current.selectionStart;
     const end = textRef.current.selectionEnd;
     const selected = start !== end ? text.slice(start, end).trim() : "";
-    const todoText = selected || text.trim();
+    const todoText = (selected || text.trim()).replace(/\*\*/g, "").replace(/__/g, "");
     if (todoText) setTodoPicker({ text: todoText });
   };
   const handlePickCategory = (cat) => {
@@ -598,7 +663,27 @@ function NoteEntryForm({ entry, onSave, onCancel, onDelete, todoCategories, onAd
   };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ fontSize: 16, fontWeight: 500 }}>{entry ? "Edit note" : "New note"}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ fontSize: 16, fontWeight: 500 }}>{entry ? "Edit note" : "New note"}</div>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <button onMouseDown={e => e.preventDefault()} onClick={() => wrapSelection("**")} title="Bold — select text first" style={{
+            fontSize: 13, fontWeight: 700, padding: "2px 8px", border: "1px solid #d4d3d0",
+            background: "transparent", color: "#666663", cursor: "pointer", borderRadius: 4,
+            fontFamily: "inherit", lineHeight: 1.3,
+          }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+          >B</button>
+          <button onMouseDown={e => e.preventDefault()} onClick={() => wrapSelection("__")} title="Underline — select text first" style={{
+            fontSize: 13, padding: "2px 8px", border: "1px solid #d4d3d0",
+            background: "transparent", color: "#666663", cursor: "pointer", borderRadius: 4,
+            fontFamily: "inherit", lineHeight: 1.3, textDecoration: "underline",
+          }}
+            onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+          >U</button>
+        </div>
+      </div>
       <textarea ref={textRef} placeholder="Write your thoughts..." value={text}
         onChange={e => setText(e.target.value)}
         style={{ fontSize: 14, padding: "10px", minHeight: 180, resize: "vertical", lineHeight: 1.6,
@@ -1400,7 +1485,7 @@ export default function Planner() {
                         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
                       >
                         <div style={{ fontSize: 13, lineHeight: 1.65, color: "#1a1a1a", whiteSpace: "pre-wrap" }}>
-                          <Linkify>{entry.text}</Linkify>
+                          <FormattedText>{entry.text}</FormattedText>
                         </div>
                         <div style={{ fontSize: 11, color: cc.text, marginTop: 6, opacity: 0.7 }}>
                           {formatNoteTimestamp(entry.createdAt)}
