@@ -572,12 +572,20 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories }) {
   );
 }
 
-function NoteEntryForm({ entry, onSave, onCancel, onDelete }) {
+function NoteEntryForm({ entry, onSave, onCancel, onDelete, onCreateTodo }) {
   const [text, setText] = useState(entry?.text || "");
   const textRef = useRef(null);
   useEffect(() => {
     if (textRef.current) textRef.current.focus();
   }, []);
+  const handleCreateTodo = () => {
+    if (!textRef.current) return;
+    const start = textRef.current.selectionStart;
+    const end = textRef.current.selectionEnd;
+    const selected = start !== end ? text.slice(start, end).trim() : "";
+    const todoText = selected || text.trim();
+    if (todoText && onCreateTodo) onCreateTodo(todoText);
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 16, fontWeight: 500 }}>{entry ? "Edit note" : "New note"}</div>
@@ -585,8 +593,18 @@ function NoteEntryForm({ entry, onSave, onCancel, onDelete }) {
         onChange={e => setText(e.target.value)}
         style={{ fontSize: 14, padding: "10px", minHeight: 180, resize: "vertical", lineHeight: 1.6,
           borderRadius: 8, border: "1px solid #d4d3d0", fontFamily: "inherit" }} />
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
-        {entry && onDelete && <button onClick={onDelete} style={{ color: "#A32D2D", borderColor: "#F09595", marginRight: "auto" }}>Delete</button>}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+        {entry && onDelete && <button onClick={onDelete} style={{ color: "#A32D2D", borderColor: "#F09595" }}>Delete</button>}
+        {entry && onCreateTodo && (
+          <button onClick={handleCreateTodo} style={{
+            fontSize: 12, padding: "4px 10px",
+            background: "transparent", color: "#999996", borderColor: "#d4d3d0",
+          }}
+            onMouseEnter={e => { e.currentTarget.style.color = "#185FA5"; e.currentTarget.style.background = "#E6F1FB"; e.currentTarget.style.borderColor = "#85B7EB"; }}
+            onMouseLeave={e => { e.currentTarget.style.color = "#999996"; e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "#d4d3d0"; }}
+          >→ To-do</button>
+        )}
+        <span style={{ flex: 1 }} />
         <button onClick={onCancel}>Cancel</button>
         <button onClick={() => { if (text.trim()) onSave(text.trim()); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
       </div>
@@ -1336,42 +1354,21 @@ export default function Planner() {
                         padding: "10px 14px", marginBottom: 8,
                         background: cc.bg, borderRadius: 8,
                         borderLeft: `3px solid ${cc.text}`,
+                        cursor: "pointer",
                         transition: "box-shadow 0.15s",
                       }}
+                        onClick={() => setModal({ type: "editNote", category: cat, entry })}
                         onMouseEnter={e => e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)"}
                         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
                       >
-                        <div style={{ fontSize: 13, lineHeight: 1.65, color: "#1a1a1a", whiteSpace: "pre-wrap", cursor: "pointer" }}
-                          onClick={() => setModal({ type: "editNote", category: cat, entry })}>
+                        <div style={{ fontSize: 13, lineHeight: 1.65, color: "#1a1a1a", whiteSpace: "pre-wrap" }}>
                           <Linkify>{entry.text}</Linkify>
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", marginTop: 6 }}>
-                          <span style={{ fontSize: 11, color: cc.text, opacity: 0.7 }}>
-                            {formatNoteTimestamp(entry.createdAt)}
-                            {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
-                              <span style={{ marginLeft: 8 }}>(edited {formatNoteTimestamp(entry.updatedAt)})</span>
-                            )}
-                          </span>
-                          <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-                            <button onClick={() => setModal({ type: "editNote", category: cat, entry })} style={{
-                              fontSize: 11, padding: "2px 8px", border: "none",
-                              background: "transparent", color: "#999996", cursor: "pointer", borderRadius: 4,
-                            }}
-                              onMouseEnter={e => { e.currentTarget.style.color = "#185FA5"; e.currentTarget.style.background = "#E6F1FB"; }}
-                              onMouseLeave={e => { e.currentTarget.style.color = "#999996"; e.currentTarget.style.background = "transparent"; }}
-                            >Edit</button>
-                            <button onClick={() => {
-                              const sel = window.getSelection()?.toString().trim();
-                              const todoText = sel || entry.text;
-                              setModal({ type: "noteTodo", text: todoText });
-                            }} style={{
-                              fontSize: 11, padding: "2px 8px", border: "none",
-                              background: "transparent", color: "#999996", cursor: "pointer", borderRadius: 4,
-                            }}
-                              onMouseEnter={e => { e.currentTarget.style.color = "#185FA5"; e.currentTarget.style.background = "#E6F1FB"; }}
-                              onMouseLeave={e => { e.currentTarget.style.color = "#999996"; e.currentTarget.style.background = "transparent"; }}
-                            >→ To-do</button>
-                          </span>
+                        <div style={{ fontSize: 11, color: cc.text, marginTop: 6, opacity: 0.7 }}>
+                          {formatNoteTimestamp(entry.createdAt)}
+                          {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
+                            <span style={{ marginLeft: 8 }}>(edited {formatNoteTimestamp(entry.updatedAt)})</span>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1494,6 +1491,7 @@ export default function Planner() {
             onSave={text => editNoteEntry(modal.category, modal.entry.id, text)}
             onCancel={() => setModal(null)}
             onDelete={() => deleteNoteEntry(modal.category, modal.entry.id)}
+            onCreateTodo={(todoText) => setModal({ type: "noteTodo", text: todoText })}
           />
         </Modal>
       )}
