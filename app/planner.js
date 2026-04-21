@@ -608,48 +608,6 @@ export default function Planner() {
     const today = new Date().getDay();
     return today === 0 ? 6 : today - 1;
   });
-  const [selectionPopup, setSelectionPopup] = useState(null); // { text, x, y, showCategories }
-  const notesContainerRef = useRef(null);
-
-  // Handle text selection in notes for "Add to-do" popup
-  useEffect(() => {
-    const handleMouseUp = () => {
-      // Small delay to let the browser finalize the selection
-      setTimeout(() => {
-        const sel = window.getSelection();
-        const text = sel?.toString().trim();
-        if (!text || !sel.rangeCount) {
-          // Don't dismiss if clicking on the popup itself
-          return;
-        }
-        // Check if selection is within the notes container
-        const range = sel.getRangeAt(0);
-        const container = notesContainerRef.current;
-        if (!container || !container.contains(range.startContainer)) {
-          return;
-        }
-        const rect = range.getBoundingClientRect();
-        setSelectionPopup({
-          text,
-          x: rect.left + rect.width / 2,
-          y: rect.top - 8,
-          showCategories: false,
-        });
-      }, 10);
-    };
-    const handleMouseDown = (e) => {
-      // Dismiss popup if clicking outside it
-      if (selectionPopup && !e.target.closest('[data-selection-popup]')) {
-        setSelectionPopup(null);
-      }
-    };
-    document.addEventListener("mouseup", handleMouseUp);
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => {
-      document.removeEventListener("mouseup", handleMouseUp);
-      document.removeEventListener("mousedown", handleMouseDown);
-    };
-  }, [selectionPopup]);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -1326,7 +1284,7 @@ export default function Planner() {
 
       {/* ═══ NOTES TAB ═══ */}
       {activeTab === "notes" && (
-        <div ref={notesContainerRef}>
+        <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
             <button onClick={() => setModal({ type: "manageNoteCategories" })} style={{
               fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
@@ -1374,30 +1332,46 @@ export default function Planner() {
                       </div>
                     )}
                     {entries.map(entry => (
-                      <div key={entry.id} data-note-entry="true" style={{
+                      <div key={entry.id} style={{
                         padding: "10px 14px", marginBottom: 8,
                         background: cc.bg, borderRadius: 8,
                         borderLeft: `3px solid ${cc.text}`,
-                        cursor: "pointer",
                         transition: "box-shadow 0.15s",
                       }}
-                        onClick={(e) => {
-                          // Don't open edit modal if user is selecting text
-                          const sel = window.getSelection();
-                          if (sel && sel.toString().trim().length > 0) return;
-                          setModal({ type: "editNote", category: cat, entry });
-                        }}
                         onMouseEnter={e => e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)"}
                         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
                       >
-                        <div style={{ fontSize: 13, lineHeight: 1.65, color: "#1a1a1a", whiteSpace: "pre-wrap" }}>
+                        <div style={{ fontSize: 13, lineHeight: 1.65, color: "#1a1a1a", whiteSpace: "pre-wrap", cursor: "pointer" }}
+                          onClick={() => setModal({ type: "editNote", category: cat, entry })}>
                           <Linkify>{entry.text}</Linkify>
                         </div>
-                        <div style={{ fontSize: 11, color: cc.text, marginTop: 6, opacity: 0.7 }}>
-                          {formatNoteTimestamp(entry.createdAt)}
-                          {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
-                            <span style={{ marginLeft: 8 }}>(edited {formatNoteTimestamp(entry.updatedAt)})</span>
-                          )}
+                        <div style={{ display: "flex", alignItems: "center", marginTop: 6 }}>
+                          <span style={{ fontSize: 11, color: cc.text, opacity: 0.7 }}>
+                            {formatNoteTimestamp(entry.createdAt)}
+                            {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
+                              <span style={{ marginLeft: 8 }}>(edited {formatNoteTimestamp(entry.updatedAt)})</span>
+                            )}
+                          </span>
+                          <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+                            <button onClick={() => setModal({ type: "editNote", category: cat, entry })} style={{
+                              fontSize: 11, padding: "2px 8px", border: "none",
+                              background: "transparent", color: "#999996", cursor: "pointer", borderRadius: 4,
+                            }}
+                              onMouseEnter={e => { e.currentTarget.style.color = "#185FA5"; e.currentTarget.style.background = "#E6F1FB"; }}
+                              onMouseLeave={e => { e.currentTarget.style.color = "#999996"; e.currentTarget.style.background = "transparent"; }}
+                            >Edit</button>
+                            <button onClick={() => {
+                              const sel = window.getSelection()?.toString().trim();
+                              const todoText = sel || entry.text;
+                              setModal({ type: "noteTodo", text: todoText });
+                            }} style={{
+                              fontSize: 11, padding: "2px 8px", border: "none",
+                              background: "transparent", color: "#999996", cursor: "pointer", borderRadius: 4,
+                            }}
+                              onMouseEnter={e => { e.currentTarget.style.color = "#185FA5"; e.currentTarget.style.background = "#E6F1FB"; }}
+                              onMouseLeave={e => { e.currentTarget.style.color = "#999996"; e.currentTarget.style.background = "transparent"; }}
+                            >→ To-do</button>
+                          </span>
                         </div>
                       </div>
                     ))}
@@ -1412,73 +1386,6 @@ export default function Planner() {
               No categories yet. Click ⚙ Categories to add some.
             </div>
           )}
-        </div>
-      )}
-
-      {/* ═══ SELECTION POPUP (notes → to-do) ═══ */}
-      {selectionPopup && (
-        <div data-selection-popup="true" style={{
-          position: "fixed",
-          left: selectionPopup.x,
-          top: selectionPopup.y,
-          transform: "translate(-50%, -100%)",
-          zIndex: 999,
-          background: "#1a1a1a",
-          borderRadius: 8,
-          padding: selectionPopup.showCategories ? "8px 4px" : "4px 4px",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
-          display: "flex",
-          flexDirection: selectionPopup.showCategories ? "column" : "row",
-          gap: 2,
-          minWidth: selectionPopup.showCategories ? 140 : undefined,
-        }}>
-          {!selectionPopup.showCategories ? (
-            <button
-              onClick={() => setSelectionPopup({ ...selectionPopup, showCategories: true })}
-              style={{
-                fontSize: 12, padding: "5px 12px", border: "none",
-                background: "transparent", color: "#fff", cursor: "pointer",
-                borderRadius: 6, whiteSpace: "nowrap",
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.15)"}
-              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-            >+ Add to-do</button>
-          ) : (
-            <>
-              <div style={{ fontSize: 10, color: "#999996", padding: "2px 8px", textTransform: "uppercase", letterSpacing: "0.05em" }}>Add to category:</div>
-              {[...PRIORITIES, ...flatCategories].map(cat => {
-                const isPriority = PRIORITIES.includes(cat);
-                return (
-                  <button key={cat} onClick={() => {
-                    const section = isPriority ? "priority" : "flat";
-                    const newItem = { id: uid(), text: selectionPopup.text, bold: false, checked: false };
-                    const newTodos = JSON.parse(JSON.stringify(data.todos));
-                    if (section === "priority") {
-                      newTodos.priority[cat] = [...(newTodos.priority[cat] || []), newItem];
-                    } else {
-                      newTodos.flat[cat] = [...(newTodos.flat[cat] || []), newItem];
-                    }
-                    persist({ ...data, todos: newTodos });
-                    setSelectionPopup(null);
-                    window.getSelection()?.removeAllRanges();
-                  }} style={{
-                    fontSize: 12, padding: "5px 10px", border: "none",
-                    background: "transparent", color: "#fff", cursor: "pointer",
-                    borderRadius: 6, textAlign: "left", whiteSpace: "nowrap",
-                  }}
-                    onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.15)"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >{isPriority ? `⚡ ${cat}` : cat}</button>
-                );
-              })}
-            </>
-          )}
-          <div style={{
-            position: "absolute", bottom: -6, left: "50%", transform: "translateX(-50%)",
-            width: 0, height: 0,
-            borderLeft: "6px solid transparent", borderRight: "6px solid transparent",
-            borderTop: "6px solid #1a1a1a",
-          }} />
         </div>
       )}
 
@@ -1588,6 +1495,60 @@ export default function Planner() {
             onCancel={() => setModal(null)}
             onDelete={() => deleteNoteEntry(modal.category, modal.entry.id)}
           />
+        </Modal>
+      )}
+      {modal?.type === "noteTodo" && (
+        <Modal onClose={() => setModal(null)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ fontSize: 16, fontWeight: 500 }}>Add to-do from note</div>
+            <div style={{ fontSize: 13, color: "#1a1a1a", background: "#f8f8f6", padding: "10px 12px", borderRadius: 8, lineHeight: 1.5, maxHeight: 120, overflowY: "auto" }}>
+              {modal.text.length > 200 ? modal.text.slice(0, 197) + "..." : modal.text}
+            </div>
+            <div style={{ fontSize: 12, color: "#666663" }}>Choose a category:</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {PRIORITIES.map(cat => {
+                const pc = priorityColors[cat];
+                return (
+                  <button key={cat} onClick={() => {
+                    const newItem = { id: uid(), text: modal.text, bold: false, checked: false };
+                    const newTodos = JSON.parse(JSON.stringify(data.todos));
+                    newTodos.priority[cat] = [...(newTodos.priority[cat] || []), newItem];
+                    persist({ ...data, todos: newTodos });
+                    setModal(null);
+                  }} style={{
+                    fontSize: 13, padding: "8px 12px", textAlign: "left",
+                    background: pc.bg, color: pc.text, borderColor: pc.border || pc.bg,
+                    borderRadius: 6, cursor: "pointer",
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = "0.8"}
+                    onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+                  >⚡ {cat}</button>
+                );
+              })}
+              {flatCategories.map((cat, idx) => {
+                const cc = getCatColor(cat, flatCategories);
+                return (
+                  <button key={cat} onClick={() => {
+                    const newItem = { id: uid(), text: modal.text, bold: false, checked: false };
+                    const newTodos = JSON.parse(JSON.stringify(data.todos));
+                    newTodos.flat[cat] = [...(newTodos.flat[cat] || []), newItem];
+                    persist({ ...data, todos: newTodos });
+                    setModal(null);
+                  }} style={{
+                    fontSize: 13, padding: "8px 12px", textAlign: "left",
+                    background: cc.bg, color: cc.text, borderColor: cc.bg,
+                    borderRadius: 6, cursor: "pointer",
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = "0.8"}
+                    onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+                  >{cat}</button>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button onClick={() => setModal(null)}>Cancel</button>
+            </div>
+          </div>
         </Modal>
       )}
     </div>
