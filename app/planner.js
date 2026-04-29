@@ -144,6 +144,104 @@ function sortByTime(items) {
   return [...items].sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
 }
 
+function parseIcsFile(text) {
+  const events = [];
+  const blocks = text.split("BEGIN:VEVENT");
+  for (let i = 1; i < blocks.length; i++) {
+    const block = blocks[i].split("END:VEVENT")[0];
+    const getField = (name) => {
+      // Handle fields with parameters like DTSTART;TZID=America/Los_Angeles:20260415T140000
+      const regex = new RegExp(`^${name}[;:](.*)$`, "m");
+      const match = block.match(regex);
+      if (!match) return "";
+      const val = match[1];
+      // If it has a colon (param;param:value), take the part after the last colon
+      const colonIdx = val.indexOf(":");
+      if (name === "DTSTART" || name === "DTEND" || name === "RRULE") {
+        return colonIdx >= 0 ? val.slice(colonIdx + 1).trim() : val.trim();
+      }
+      return val.trim();
+    };
+    const dtStart = getField("DTSTART");
+    const dtEnd = getField("DTEND");
+    const summary = getField("SUMMARY").replace(/\\,/g, ",").replace(/\\n/g, "\n").replace(/\\\\/g, "\\");
+    const description = getField("DESCRIPTION").replace(/\\,/g, ",").replace(/\\n/g, "\n").replace(/\\\\/g, "\\");
+    const location = getField("LOCATION").replace(/\\,/g, ",");
+    const rrule = getField("RRULE");
+
+    if (!dtStart || !summary) continue;
+
+    // Parse date/time: formats like 20260415T140000 or 20260415T140000Z or 20260415
+    const parseIcsDt = (dt) => {
+      if (!dt) return null;
+      const clean = dt.replace(/[^0-9T]/g, "");
+      const year = parseInt(clean.slice(0, 4), 10);
+      const month = parseInt(clean.slice(4, 6), 10) - 1;
+      const day = parseInt(clean.slice(6, 8), 10);
+      let hours = 0, mins = 0;
+      if (clean.includes("T") && clean.length >= 13) {
+        hours = parseInt(clean.slice(9, 11), 10);
+        mins = parseInt(clean.slice(11, 13), 10);
+      }
+      return new Date(year, month, day, hours, mins);
+    };
+
+    const startDate = parseIcsDt(dtStart);
+    if (!startDate) continue;
+
+    // Format time as "h:mmam/pm"
+    const formatIcsTime = (d) => {
+      if (!d) return "";
+      let h = d.getHours();
+      const m = String(d.getMinutes()).padStart(2, "0");
+      const ampm = h >= 12 ? "pm" : "am";
+      h = h % 12 || 12;
+      return m === "00" ? `${h}${ampm}` : `${h}:${m}${ampm}`;
+    };
+
+    // Determine day of week
+    const dayOfWeek = startDate.getDay();
+    const dayKey = DAYS[dayOfWeek === 0 ? 6 : dayOfWeek - 1];
+
+    // Determine recurrence
+    let recurrence = "none";
+    if (rrule) {
+      if (rrule.includes("FREQ=WEEKLY") && rrule.includes("INTERVAL=2")) recurrence = "biweekly";
+      else if (rrule.includes("FREQ=WEEKLY")) recurrence = "weekly";
+      else if (rrule.includes("FREQ=DAILY")) recurrence = "weekly"; // approximate
+    }
+
+    // Build notes from description and location
+    const notesParts = [];
+    if (location) notesParts.push(location);
+    if (description) notesParts.push(description);
+
+    const endDate = parseIcsDt(dtEnd);
+
+    // Get the Monday of the event's week for eventDate
+    const evDay = startDate.getDay();
+    const evDiff = evDay === 0 ? -6 : 1 - evDay;
+    const evMonday = new Date(startDate);
+    evMonday.setDate(startDate.getDate() + evDiff);
+    const evMondayStr = `${evMonday.getFullYear()}-${String(evMonday.getMonth() + 1).padStart(2, "0")}-${String(evMonday.getDate()).padStart(2, "0")}`;
+
+    events.push({
+      id: uid(),
+      text: summary,
+      time: formatIcsTime(startDate),
+      endTime: endDate ? formatIcsTime(endDate) : "",
+      notes: notesParts.join("\n").trim(),
+      category: "Personal",
+      recurrence,
+      bold: false,
+      dayKey,
+      eventDate: recurrence === "none" ? evMondayStr : undefined,
+      anchorDate: recurrence === "biweekly" ? evMondayStr : undefined,
+    });
+  }
+  return events;
+}
+
 const defaultData = () => ({
   schedule: DAYS.reduce((acc, day) => ({ ...acc, [day]: [] }), {}),
   todos: {
@@ -1194,6 +1292,29 @@ export default function Planner() {
                 onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
                 onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
               >{data.hideCalendar ? "Show" : "Hide"}</button>
+              <button onClick={() => document.getElementById("ics-file-input")?.click()} style={{
+                fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
+              }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
+              >Import .ics</button>
+              <input id="ics-file-input" type="file" accept=".ics,.ical" style={{ display: "none" }}
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    const parsed = parseIcsFile(ev.target.result);
+                    if (parsed.length > 0) {
+                      setModal({ type: "importIcs", events: parsed });
+                    } else {
+                      alert("No events found in this file.");
+                    }
+                  };
+                  reader.readAsText(file);
+                  e.target.value = "";
+                }}
+              />
             </div>
           </div>
           {/* Week navigation */}
@@ -1542,6 +1663,81 @@ export default function Planner() {
       )}
 
       {/* ═══ MODALS ═══ */}
+      {modal?.type === "importIcs" && (
+        <Modal onClose={() => setModal(null)}>
+          {(() => {
+            const ImportPreview = () => {
+              const [selected, setSelected] = useState(modal.events.map(() => true));
+              const [categories, setCategories] = useState(modal.events.map(() => "Personal"));
+              const toggleSelect = (idx) => {
+                const next = [...selected];
+                next[idx] = !next[idx];
+                setSelected(next);
+              };
+              const handleImport = () => {
+                const newSchedule = JSON.parse(JSON.stringify(data.schedule));
+                modal.events.forEach((ev, idx) => {
+                  if (!selected[idx]) return;
+                  const event = { ...ev, category: categories[idx] };
+                  delete event.dayKey;
+                  newSchedule[ev.dayKey] = sortByTime([...newSchedule[ev.dayKey], event]);
+                });
+                persist({ ...data, schedule: newSchedule });
+                setModal(null);
+              };
+              const selectedCount = selected.filter(Boolean).length;
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ fontSize: 16, fontWeight: 500 }}>Import events</div>
+                  <div style={{ fontSize: 12, color: "#666663" }}>
+                    Found {modal.events.length} event{modal.events.length !== 1 ? "s" : ""}. Select which to import and set categories.
+                  </div>
+                  <div style={{ maxHeight: 400, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+                    {modal.events.map((ev, idx) => (
+                      <div key={idx} style={{
+                        display: "flex", alignItems: "flex-start", gap: 8,
+                        padding: "8px 10px", background: selected[idx] ? "#f8f8f6" : "transparent",
+                        borderRadius: 8, border: selected[idx] ? "1px solid #d4d3d0" : "1px solid transparent",
+                        opacity: selected[idx] ? 1 : 0.5,
+                      }}>
+                        <input type="checkbox" checked={selected[idx]} onChange={() => toggleSelect(idx)}
+                          style={{ marginTop: 3, cursor: "pointer" }} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 500, color: "#1a1a1a" }}>
+                            <span style={{ fontWeight: 700 }}>{ev.dayKey} {ev.time}{ev.endTime ? `–${ev.endTime}` : ""}</span>{" "}
+                            {ev.text}
+                          </div>
+                          {ev.notes && <div style={{ fontSize: 11, color: "#999996", marginTop: 2 }}>{ev.notes.slice(0, 80)}{ev.notes.length > 80 ? "..." : ""}</div>}
+                          <div style={{ fontSize: 11, color: "#999996", marginTop: 2 }}>
+                            {ev.recurrence === "weekly" ? "Repeats weekly" : ev.recurrence === "biweekly" ? "Repeats biweekly" : "One-time"}
+                            {ev.eventDate ? ` · Week of ${ev.eventDate}` : ""}
+                          </div>
+                        </div>
+                        <select value={categories[idx]} onChange={e => {
+                          const next = [...categories];
+                          next[idx] = e.target.value;
+                          setCategories(next);
+                        }} style={{ fontSize: 11, padding: "3px 6px", marginTop: 2 }}>
+                          {EVENT_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+                    <button onClick={() => setModal(null)}>Cancel</button>
+                    <button onClick={handleImport} disabled={selectedCount === 0} style={{
+                      background: selectedCount > 0 ? "#E6F1FB" : "#f2f1ee",
+                      color: selectedCount > 0 ? "#185FA5" : "#999996",
+                      borderColor: selectedCount > 0 ? "#85B7EB" : "#d4d3d0",
+                    }}>Import {selectedCount} event{selectedCount !== 1 ? "s" : ""}</button>
+                  </div>
+                </div>
+              );
+            };
+            return <ImportPreview />;
+          })()}
+        </Modal>
+      )}
       {modal?.type === "addSchedule" && (
         <Modal onClose={() => setModal(null)}>
           <ScheduleItemForm onSave={item => addScheduleItem(modal.day, item)} onCancel={() => setModal(null)} />
