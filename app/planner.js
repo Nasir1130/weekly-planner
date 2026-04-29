@@ -455,7 +455,7 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
 
 // ─── FORM COMPONENTS ─────────────────────────────────────────────
 
-function ScheduleItemForm({ item, dayKey, onSave, onSaveOverride, onRevertOverride, onCancel, onDelete, onSkip, isSkipped, isRecurring, hasOverride }) {
+function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride, onRevertOverride, onCancel, onDelete, onSkip, isSkipped, isRecurring, hasOverride }) {
   const [editScope, setEditScope] = useState(hasOverride ? "week" : "week");
   const [time, setTime] = useState(item?.time || "");
   const [endTime, setEndTime] = useState(item?.endTime || "");
@@ -465,6 +465,7 @@ function ScheduleItemForm({ item, dayKey, onSave, onSaveOverride, onRevertOverri
   const [recurrence, setRecurrence] = useState(item?.recurrence || "none");
   const [category, setCategory] = useState(item?.category || "Personal");
   const [excludeFromTasks, setExcludeFromTasks] = useState(item?.excludeFromTasks || false);
+  const [endDate, setEndDate] = useState(item?.endDate || "");
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
   const showsAsSession = text.toLowerCase().includes("session") && category === "Client";
@@ -552,6 +553,28 @@ function ScheduleItemForm({ item, dayKey, onSave, onSaveOverride, onRevertOverri
           ))}
         </div>
       )}
+      {!isWeekScope && (recurrence !== "none" || (item && item.recurrence !== "none")) && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ fontSize: 13, color: "#666663" }}>Ends after:</span>
+          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)}
+            style={{ fontSize: 13, padding: "4px 8px", color: endDate ? "#1a1a1a" : "#999996" }} />
+          {!endDate && viewingMonday && (
+            <button onClick={() => setEndDate(viewingMonday)} style={{
+              fontSize: 11, padding: "3px 8px",
+              background: "transparent", color: "#999996", borderColor: "#d4d3d0",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.color = "#854F0B"; e.currentTarget.style.background = "#FAEEDA"; }}
+              onMouseLeave={e => { e.currentTarget.style.color = "#999996"; e.currentTarget.style.background = "transparent"; }}
+            >End after this week</button>
+          )}
+          {endDate && (
+            <button onClick={() => setEndDate("")} style={{
+              fontSize: 11, padding: "3px 8px",
+              background: "transparent", color: "#999996", border: "none", cursor: "pointer",
+            }}>✕</button>
+          )}
+        </div>
+      )}
       {showsAsSession && !isWeekScope && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666663", cursor: "pointer" }}>
           <input type="checkbox" checked={excludeFromTasks} onChange={e => setExcludeFromTasks(e.target.checked)} />
@@ -579,7 +602,7 @@ function ScheduleItemForm({ item, dayKey, onSave, onSaveOverride, onRevertOverri
           if (isWeekScope) {
             onSaveOverride({ time, endTime, text, notes, day });
           } else {
-            onSave({ time, endTime, text, notes, recurrence, category, excludeFromTasks });
+            onSave({ time, endTime, text, notes, recurrence, category, excludeFromTasks, endDate: endDate || undefined });
           }
         }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
       </div>
@@ -815,6 +838,7 @@ export default function Planner() {
       if (updates.recurrence === "none" && !updated.eventDate) updated.eventDate = viewingMonday;
       if (updates.recurrence === "biweekly" && !updated.anchorDate) updated.anchorDate = viewingMonday;
       if (updates.recurrence === "weekly") { delete updated.eventDate; delete updated.anchorDate; }
+      if (!updates.endDate) delete updated.endDate;
       return updated;
     }));
     persist({ ...data, schedule: { ...data.schedule, [dayKey]: items } });
@@ -1046,8 +1070,15 @@ export default function Planner() {
     const { compact } = opts;
     const today = isToday(date);
 
+    // Helper: check if event has ended before the viewing week
+    const isEventEnded = (item) => {
+      if (!item.endDate) return false;
+      return viewingMonday > item.endDate;
+    };
+
     // 1. Get this day's own events, filtered for visibility
     const ownItems = (data.schedule[day] || []).filter(item => {
+      if (isEventEnded(item)) return false;
       if (item.recurrence === "weekly") return true;
       if (item.recurrence === "biweekly") return isBiweeklyVisible(item.anchorDate, weekOffset);
       if (item.recurrence === "none") { if (!item.eventDate) return weekOffset === 0; return item.eventDate === viewingMonday; }
@@ -1057,7 +1088,7 @@ export default function Planner() {
     // 2. Exclude events that have a day override moving them AWAY from this day
     const stayingItems = ownItems.filter(item => {
       const ovr = item.weekOverrides?.[viewingMonday];
-      if (ovr && ovr.day && ovr.day !== day) return false; // moved away
+      if (ovr && ovr.day && ovr.day !== day) return false;
       return true;
     });
 
@@ -1066,7 +1097,7 @@ export default function Planner() {
     DAYS.forEach(otherDay => {
       if (otherDay === day) return;
       (data.schedule[otherDay] || []).forEach(item => {
-        // Must be a recurring/visible event
+        if (isEventEnded(item)) return;
         if (item.recurrence === "none") return;
         if (item.recurrence === "biweekly" && !isBiweeklyVisible(item.anchorDate, weekOffset)) return;
         const ovr = item.weekOverrides?.[viewingMonday];
@@ -1248,6 +1279,7 @@ export default function Planner() {
             const autoTasks = [];
             DAYS.forEach(day => {
               (data.schedule[day] || []).forEach(rawItem => {
+                if (rawItem.endDate && viewingMonday > rawItem.endDate) return;
                 const item = getEffectiveEvent(rawItem);
                 const effectiveDay = item.weekOverrides?.[viewingMonday]?.day || day;
                 if (item.category !== "Client") return;
@@ -1519,6 +1551,7 @@ export default function Planner() {
         <Modal onClose={() => setModal(null)}>
           <ScheduleItemForm item={modal.item}
             dayKey={modal.displayDay || modal.day}
+            viewingMonday={viewingMonday}
             isRecurring={modal.item.recurrence !== "none"}
             isSkipped={modal.item.skipDates && modal.item.skipDates.includes(viewingMonday)}
             hasOverride={!!modal.item.weekOverrides?.[viewingMonday]}
