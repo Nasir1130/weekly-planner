@@ -217,19 +217,81 @@ function parseIcsFile(text) {
     if (description) notesParts.push(description);
 
     const endDate = parseIcsDt(dtEnd);
+    const hasTime = dtStart.includes("T");
 
-    // Get the Monday of the event's week for eventDate
-    const evDay = startDate.getDay();
-    const evDiff = evDay === 0 ? -6 : 1 - evDay;
-    const evMonday = new Date(startDate);
-    evMonday.setDate(startDate.getDate() + evDiff);
-    const evMondayStr = `${evMonday.getFullYear()}-${String(evMonday.getMonth() + 1).padStart(2, "0")}-${String(evMonday.getDate()).padStart(2, "0")}`;
+    // Check for multi-day events
+    const getMondayStr = (d) => {
+      const dow = d.getDay();
+      const diff = dow === 0 ? -6 : 1 - dow;
+      const mon = new Date(d);
+      mon.setDate(d.getDate() + diff);
+      return `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
+    };
+
+    if (endDate && !hasTime) {
+      // All-day event — DTEND is exclusive (e.g. DTSTART:20260415 DTEND:20260418 = 3 days: 15,16,17)
+      const dayCount = Math.round((endDate - startDate) / (1000 * 60 * 60 * 24));
+      if (dayCount > 1) {
+        for (let d = 0; d < dayCount; d++) {
+          const thisDay = new Date(startDate);
+          thisDay.setDate(startDate.getDate() + d);
+          const thisDow = thisDay.getDay();
+          const thisDayKey = DAYS[thisDow === 0 ? 6 : thisDow - 1];
+          const dayLabel = dayCount > 1 ? ` (Day ${d + 1} of ${dayCount})` : "";
+          events.push({
+            id: uid(),
+            text: summary + dayLabel,
+            time: "",
+            endTime: "",
+            notes: notesParts.join("\n").trim(),
+            category: "Personal",
+            recurrence: "none",
+            bold: false,
+            dayKey: thisDayKey,
+            eventDate: getMondayStr(thisDay),
+          });
+        }
+        continue;
+      }
+    } else if (endDate && hasTime) {
+      // Timed event spanning multiple days
+      const startDay = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+      const endDay = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+      const dayCount = Math.round((endDay - startDay) / (1000 * 60 * 60 * 24)) + 1;
+      if (dayCount > 1) {
+        for (let d = 0; d < dayCount; d++) {
+          const thisDay = new Date(startDate);
+          thisDay.setDate(startDate.getDate() + d);
+          const thisDow = thisDay.getDay();
+          const thisDayKey = DAYS[thisDow === 0 ? 6 : thisDow - 1];
+          const dayLabel = ` (Day ${d + 1} of ${dayCount})`;
+          const isFirst = d === 0;
+          const isLast = d === dayCount - 1;
+          events.push({
+            id: uid(),
+            text: summary + dayLabel,
+            time: isFirst ? formatIcsTime(startDate) : "",
+            endTime: isLast ? formatIcsTime(endDate) : "",
+            notes: notesParts.join("\n").trim(),
+            category: "Personal",
+            recurrence: "none",
+            bold: false,
+            dayKey: thisDayKey,
+            eventDate: getMondayStr(thisDay),
+          });
+        }
+        continue;
+      }
+    }
+
+    // Single-day event (normal case)
+    const evMondayStr = getMondayStr(startDate);
 
     events.push({
       id: uid(),
       text: summary,
-      time: formatIcsTime(startDate),
-      endTime: endDate ? formatIcsTime(endDate) : "",
+      time: hasTime ? formatIcsTime(startDate) : "",
+      endTime: endDate && hasTime ? formatIcsTime(endDate) : "",
       notes: notesParts.join("\n").trim(),
       category: "Personal",
       recurrence,
