@@ -1295,14 +1295,20 @@ export default function Planner() {
           const hasOvr = item.weekOverrides?.[viewingMonday];
           const catColor = EVENT_CAT_COLORS[item.category] || EVENT_CAT_COLORS.Personal;
           const sourceDay = item._sourceDay || day;
+          const isAllDay = !item.time;
           return (
             <div key={item.id} onClick={() => setModal({ type: "editSchedule", day: sourceDay, displayDay: day, item })} style={{
               fontSize, lineHeight: 1.5, marginBottom: compact ? 4 : 6, cursor: "pointer",
               opacity: skipped ? 0.5 : 1, textDecoration: skipped ? "line-through" : "none",
-              borderRadius: 4, padding: compact ? "2px 4px" : "4px 8px", margin: "0 -4px",
+              borderRadius: isAllDay ? 6 : 4,
+              padding: compact ? (isAllDay ? "3px 6px" : "2px 4px") : (isAllDay ? "5px 10px" : "4px 8px"),
+              margin: "0 -4px",
+              background: isAllDay && !skipped ? (catColor.light || "#f2f1ee") : "transparent",
+              border: isAllDay && !skipped ? `0.5px solid ${catColor.text}22` : "none",
             }}
-              onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-              <span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: timeFontSize, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}
+              onMouseEnter={e => { if (!isAllDay) e.currentTarget.style.background = "#f2f1ee"; else e.currentTarget.style.opacity = "0.85"; }}
+              onMouseLeave={e => { if (!isAllDay) e.currentTarget.style.background = "transparent"; else e.currentTarget.style.opacity = skipped ? "0.5" : "1"; }}>
+              {item.time && <><span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: timeFontSize, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}</>}
               {compact
                 ? <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
                 : <Linkify style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</Linkify>
