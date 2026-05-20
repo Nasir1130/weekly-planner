@@ -304,6 +304,8 @@ function parseIcsFile(text) {
   return events;
 }
 
+const DEFAULT_LIBRARY_CATEGORIES = ["Reference", "Contacts", "Ideas"];
+
 const defaultData = () => ({
   schedule: DAYS.reduce((acc, day) => ({ ...acc, [day]: [] }), {}),
   todos: {
@@ -319,9 +321,12 @@ const defaultData = () => ({
   weeklyTaskChecks: {},
   flatCategories: DEFAULT_FLAT_CATEGORIES,
   activeTab: "todo",
-  notes: {},           // { "2026-03-30": { "Daily Thoughts": [ { id, text, createdAt, updatedAt } ] } }
+  notes: {},
   noteCategories: DEFAULT_NOTE_CATEGORIES,
   noteCollapsed: {},
+  library: {},            // { "Reference": [ { id, text, createdAt, updatedAt } ] }
+  libraryCategories: DEFAULT_LIBRARY_CATEGORIES,
+  libraryCollapsed: {},
 });
 
 async function loadData() {
@@ -342,6 +347,9 @@ async function loadData() {
         notes: data.notes || {},
         noteCollapsed: data.noteCollapsed || {},
         activeTab: data.activeTab || "todo",
+        library: data.library || {},
+        libraryCategories: data.libraryCategories || DEFAULT_LIBRARY_CATEGORIES,
+        libraryCollapsed: data.libraryCollapsed || {},
       };
     }
     return null;
@@ -625,10 +633,12 @@ function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride,
   const [recurrence, setRecurrence] = useState(item?.recurrence || "none");
   const [category, setCategory] = useState(item?.category || "Personal");
   const [excludeFromTasks, setExcludeFromTasks] = useState(item?.excludeFromTasks || false);
+  const [generateTask, setGenerateTask] = useState(item?.generateTask || false);
   const [endDate, setEndDate] = useState(item?.endDate || "");
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
   const showsAsSession = text.toLowerCase().includes("session") && category === "Client";
+  const autoGenerates = showsAsSession && !excludeFromTasks;
   const isWeekScope = isRecurring && editScope === "week";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -735,11 +745,21 @@ function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride,
           )}
         </div>
       )}
-      {showsAsSession && !isWeekScope && (
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666663", cursor: "pointer" }}>
-          <input type="checkbox" checked={excludeFromTasks} onChange={e => setExcludeFromTasks(e.target.checked)} />
-          No progress note needed
-        </label>
+      {!isWeekScope && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666663", cursor: "pointer" }}>
+            <input type="checkbox" checked={generateTask || autoGenerates} onChange={e => {
+              if (autoGenerates) {
+                // If auto-detected, checking off means exclude
+                setExcludeFromTasks(!excludeFromTasks);
+              } else {
+                setGenerateTask(e.target.checked);
+              }
+            }} />
+            Generate weekly task
+            {autoGenerates && !excludeFromTasks && <span style={{ fontSize: 11, color: "#999996" }}>(auto — Client session)</span>}
+          </label>
+        </div>
       )}
       {isWeekScope && (
         <div style={{ fontSize: 11, color: "#999996", fontStyle: "italic" }}>
@@ -762,7 +782,7 @@ function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride,
           if (isWeekScope) {
             onSaveOverride({ time, endTime, text, notes, day });
           } else {
-            onSave({ time, endTime, text, notes, recurrence, category, excludeFromTasks, endDate: endDate || undefined });
+            onSave({ time, endTime, text, notes, recurrence, category, excludeFromTasks, generateTask, endDate: endDate || undefined });
           }
         }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
       </div>
@@ -770,9 +790,20 @@ function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride,
   );
 }
 
+const TODO_COLORS = [
+  { name: "none", color: "#1a1a1a", label: "Default" },
+  { name: "red", color: "#A32D2D", label: "Red" },
+  { name: "orange", color: "#9A5B13", label: "Orange" },
+  { name: "green", color: "#2D7A2D", label: "Green" },
+  { name: "blue", color: "#185FA5", label: "Blue" },
+  { name: "purple", color: "#534AB7", label: "Purple" },
+  { name: "teal", color: "#1A7A7A", label: "Teal" },
+];
+
 function TodoItemForm({ item, onSave, onCancel, onDelete, categories }) {
   const [text, setText] = useState(item?.text || "");
   const [bold, setBold] = useState(item?.bold || false);
+  const [color, setColor] = useState(item?.color || "none");
   const [category, setCategory] = useState(item?._moveTarget || "");
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -780,11 +811,24 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 16, fontWeight: 500 }}>{item ? "Edit item" : "New item"}</div>
       <input ref={inputRef} placeholder="What needs doing?" value={text} onChange={e => setText(e.target.value)}
-        onKeyDown={e => { if (e.key === "Enter" && text.trim()) onSave({ text, bold, moveTarget: category }); }} />
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        onKeyDown={e => { if (e.key === "Enter" && text.trim()) onSave({ text, bold, color, moveTarget: category }); }} />
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666663", cursor: "pointer" }}>
           <input type="checkbox" checked={bold} onChange={e => setBold(e.target.checked)} /> Bold
         </label>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          {TODO_COLORS.map(c => (
+            <button key={c.name} onClick={() => setColor(c.name)} title={c.label} style={{
+              width: 18, height: 18, borderRadius: "50%", border: color === c.name ? "2px solid #1a1a1a" : "1.5px solid #d4d3d0",
+              background: c.name === "none" ? "#f8f8f6" : c.color, cursor: "pointer", padding: 0,
+              opacity: color === c.name ? 1 : 0.6,
+              transition: "opacity 0.1s, border-color 0.1s",
+            }}
+              onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+              onMouseLeave={e => { if (color !== c.name) e.currentTarget.style.opacity = "0.6"; }}
+            />
+          ))}
+        </div>
         {item && categories && (
           <select value={category} onChange={e => setCategory(e.target.value)} style={{ fontSize: 13, padding: "4px 8px" }}>
             <option value="">Move to...</option>
@@ -795,7 +839,7 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories }) {
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
         {item && onDelete && <button onClick={onDelete} style={{ color: "#A32D2D", borderColor: "#F09595", marginRight: "auto" }}>Delete</button>}
         <button onClick={onCancel}>Cancel</button>
-        <button onClick={() => { if (text.trim()) onSave({ text, bold, moveTarget: category }); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
+        <button onClick={() => { if (text.trim()) onSave({ text, bold, color, moveTarget: category }); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
       </div>
     </div>
   );
@@ -1052,6 +1096,7 @@ export default function Planner() {
   // ─── TODO CRUD ───
   const addTodoItem = (section, subKey, item) => {
     const newItem = { id: uid(), text: item.text, bold: item.bold, checked: false };
+    if (item.color && item.color !== "none") newItem.color = item.color;
     const newTodos = { ...data.todos };
     if (section === "priority") newTodos.priority = { ...newTodos.priority, [subKey]: [...newTodos.priority[subKey], newItem] };
     else newTodos.flat = { ...newTodos.flat, [subKey]: [...newTodos.flat[subKey], newItem] };
@@ -1061,16 +1106,24 @@ export default function Planner() {
 
   const editTodoItem = (section, subKey, itemId, updates) => {
     const newTodos = { ...data.todos };
+    const colorVal = updates.color && updates.color !== "none" ? updates.color : undefined;
     if (updates.moveTarget && updates.moveTarget !== subKey) {
       const sourceList = section === "priority" ? newTodos.priority : newTodos.flat;
       const item = sourceList[subKey].find(it => it.id === itemId);
       sourceList[subKey] = sourceList[subKey].filter(it => it.id !== itemId);
       const isPriorityTarget = PRIORITIES.includes(updates.moveTarget);
       const targetSection = isPriorityTarget ? newTodos.priority : newTodos.flat;
-      targetSection[updates.moveTarget] = [...targetSection[updates.moveTarget], { ...item, text: updates.text, bold: updates.bold }];
+      const updated = { ...item, text: updates.text, bold: updates.bold };
+      if (colorVal) updated.color = colorVal; else delete updated.color;
+      targetSection[updates.moveTarget] = [...targetSection[updates.moveTarget], updated];
     } else {
       const list = section === "priority" ? newTodos.priority : newTodos.flat;
-      list[subKey] = list[subKey].map(it => it.id === itemId ? { ...it, text: updates.text, bold: updates.bold } : it);
+      list[subKey] = list[subKey].map(it => {
+        if (it.id !== itemId) return it;
+        const updated = { ...it, text: updates.text, bold: updates.bold };
+        if (colorVal) updated.color = colorVal; else delete updated.color;
+        return updated;
+      });
     }
     persist({ ...data, todos: newTodos });
     setModal(null);
@@ -1181,6 +1234,56 @@ export default function Planner() {
     });
     deletions.forEach(cat => { delete newNoteCollapsed[cat]; });
     persist({ ...data, notes, noteCategories: finalOrder, noteCollapsed: newNoteCollapsed });
+    setModal(null);
+  };
+
+  // ─── LIBRARY CRUD ───
+  const libraryCategories = data.libraryCategories || DEFAULT_LIBRARY_CATEGORIES;
+
+  const addLibraryEntry = (category, text) => {
+    const library = JSON.parse(JSON.stringify(data.library || {}));
+    if (!library[category]) library[category] = [];
+    const now = Date.now();
+    library[category].push({ id: uid(), text, createdAt: now, updatedAt: now });
+    persist({ ...data, library });
+    setModal(null);
+  };
+
+  const editLibraryEntry = (category, entryId, text) => {
+    const library = JSON.parse(JSON.stringify(data.library || {}));
+    const catEntries = library[category];
+    if (!catEntries) return;
+    const idx = catEntries.findIndex(e => e.id === entryId);
+    if (idx === -1) return;
+    catEntries[idx] = { ...catEntries[idx], text, updatedAt: Date.now() };
+    persist({ ...data, library });
+    setModal(null);
+  };
+
+  const deleteLibraryEntry = (category, entryId) => {
+    const library = JSON.parse(JSON.stringify(data.library || {}));
+    const catEntries = library[category];
+    if (!catEntries) return;
+    library[category] = catEntries.filter(e => e.id !== entryId);
+    persist({ ...data, library });
+    setModal(null);
+  };
+
+  const toggleLibraryCollapse = (key) => {
+    persist({ ...data, libraryCollapsed: { ...(data.libraryCollapsed || {}), [key]: !(data.libraryCollapsed || {})[key] } });
+  };
+
+  // ─── LIBRARY CATEGORY MANAGEMENT ───
+  const handleManageLibraryCategories = ({ finalOrder, renames, deletions, additions }) => {
+    const library = JSON.parse(JSON.stringify(data.library || {}));
+    const newCollapsed = { ...(data.libraryCollapsed || {}) };
+    Object.entries(renames).forEach(([oldName, newName]) => {
+      if (library[oldName]) { library[newName] = library[oldName]; delete library[oldName]; }
+      if (newCollapsed[oldName] !== undefined) { newCollapsed[newName] = newCollapsed[oldName]; delete newCollapsed[oldName]; }
+    });
+    deletions.forEach(cat => { delete library[cat]; delete newCollapsed[cat]; });
+    additions.forEach(cat => { if (!library[cat]) library[cat] = []; });
+    persist({ ...data, library, libraryCategories: finalOrder, libraryCollapsed: newCollapsed });
     setModal(null);
   };
 
@@ -1417,6 +1520,7 @@ export default function Planner() {
         {[
           { key: "todo", label: "To-Do" },
           { key: "notes", label: "Notes" },
+          { key: "library", label: "Library" },
         ].map(tab => (
           <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
             fontSize: 14, fontWeight: activeTab === tab.key ? 600 : 400,
@@ -1471,9 +1575,9 @@ export default function Planner() {
                 if (rawItem.endDate && viewingMonday > rawItem.endDate) return;
                 const item = getEffectiveEvent(rawItem);
                 const effectiveDay = item.weekOverrides?.[viewingMonday]?.day || day;
-                if (item.category !== "Client") return;
-                if (!item.text.toLowerCase().includes("session")) return;
-                if (item.excludeFromTasks) return;
+                const isAutoSession = item.category === "Client" && item.text.toLowerCase().includes("session") && !item.excludeFromTasks;
+                const isManualGenerate = item.generateTask;
+                if (!isAutoSession && !isManualGenerate) return;
                 if (item.recurrence === "none" && item.eventDate !== viewingMonday) return;
                 if (item.recurrence === "biweekly" && !isBiweeklyVisible(item.anchorDate, weekOffset)) return;
                 if (item.skipDates && item.skipDates.includes(viewingMonday)) return;
@@ -1555,7 +1659,7 @@ export default function Planner() {
                             style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px", cursor: "grab" }}>
                             <input type="checkbox" checked={false} onChange={() => checkTodoItem("priority", priority, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
                             <span onClick={() => setModal({ type: "editTodo", section: "priority", subKey: priority, item: { ...item, _moveTarget: "" } })}
-                              style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: "#1a1a1a", flex: 1 }}
+                              style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
                               onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
                             <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
                           </div>
@@ -1595,7 +1699,7 @@ export default function Planner() {
                           style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px", cursor: "grab" }}>
                           <input type="checkbox" checked={false} onChange={() => checkTodoItem("flat", cat, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
                           <span onClick={() => setModal({ type: "editTodo", section: "flat", subKey: cat, item: { ...item, _moveTarget: "" } })}
-                            style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: "#1a1a1a", flex: 1 }}
+                            style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
                             onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
                           <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
                         </div>
@@ -1723,6 +1827,79 @@ export default function Planner() {
           })}
 
           {noteCategories.length === 0 && (
+            <div style={{ fontSize: 13, color: "#999996", fontStyle: "italic", padding: "20px 0", textAlign: "center" }}>
+              No categories yet. Click ⚙ Categories to add some.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ LIBRARY TAB ═══ */}
+      {activeTab === "library" && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <button onClick={() => setModal({ type: "manageLibraryCategories" })} style={{
+              fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
+            >&#9881; Categories</button>
+            <span style={{ fontSize: 12, color: "#999996" }}>Permanent notes — not tied to any week</span>
+          </div>
+
+          {libraryCategories.map(cat => {
+            const entries = (data.library || {})[cat] || [];
+            const cc = getNoteCatColor(cat, libraryCategories);
+            const isCollapsed = (data.libraryCollapsed || {})[cat];
+            return (
+              <div key={cat} style={{ marginBottom: 16 }}>
+                <div onClick={() => toggleLibraryCollapse(cat)} style={{
+                  display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none",
+                  padding: "6px 0", borderBottom: "0.5px solid #d4d3d0",
+                }}>
+                  <CollapseArrow collapsed={isCollapsed} />
+                  <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>{cat}</span>
+                  <button onClick={e => { e.stopPropagation(); setModal({ type: "addLibrary", category: cat }); }} style={{
+                    fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6,
+                    background: "transparent", color: "#999996", cursor: "pointer",
+                  }}>+</button>
+                  <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{entries.length}</span>
+                </div>
+                {!isCollapsed && (
+                  <div style={{ paddingTop: 8 }}>
+                    {entries.length === 0 && (
+                      <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic" }}>no entries</div>
+                    )}
+                    {entries.map(entry => (
+                      <div key={entry.id} style={{
+                        padding: "10px 14px", marginBottom: 8,
+                        background: cc.bg, borderRadius: 8,
+                        borderLeft: `3px solid ${cc.text}`,
+                        cursor: "pointer",
+                        transition: "box-shadow 0.15s",
+                      }}
+                        onClick={() => setModal({ type: "editLibrary", category: cat, entry })}
+                        onMouseEnter={e => e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)"}
+                        onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
+                      >
+                        <div style={{ fontSize: 13, lineHeight: 1.65, color: "#1a1a1a", whiteSpace: "pre-wrap" }}>
+                          <FormattedText>{entry.text}</FormattedText>
+                        </div>
+                        <div style={{ fontSize: 11, color: cc.text, marginTop: 6, opacity: 0.7 }}>
+                          {formatNoteTimestamp(entry.createdAt)}
+                          {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
+                            <span style={{ marginLeft: 8 }}>(edited {formatNoteTimestamp(entry.updatedAt)})</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {libraryCategories.length === 0 && (
             <div style={{ fontSize: 13, color: "#999996", fontStyle: "italic", padding: "20px 0", textAlign: "center" }}>
               No categories yet. Click ⚙ Categories to add some.
             </div>
@@ -1922,6 +2099,59 @@ export default function Planner() {
             onSave={text => editNoteEntry(modal.category, modal.entry.id, text)}
             onCancel={() => setModal(null)}
             onDelete={() => deleteNoteEntry(modal.category, modal.entry.id)}
+            todoCategories={[
+              ...PRIORITIES.map(p => ({ name: p, label: `⚡ ${p}`, section: "priority", ...priorityColors[p] })),
+              ...flatCategories.map(c => ({ name: c, label: c, section: "flat", ...getCatColor(c, flatCategories) })),
+            ]}
+            onAddTodo={(todoText, cat) => {
+              const newItem = { id: uid(), text: todoText, bold: false, checked: false };
+              const newTodos = JSON.parse(JSON.stringify(data.todos));
+              if (cat.section === "priority") newTodos.priority[cat.name] = [...(newTodos.priority[cat.name] || []), newItem];
+              else newTodos.flat[cat.name] = [...(newTodos.flat[cat.name] || []), newItem];
+              persist({ ...data, todos: newTodos });
+            }}
+          />
+        </Modal>
+      )}
+      {modal?.type === "manageLibraryCategories" && (
+        <Modal onClose={() => setModal(null)}>
+          <ManageCategoriesModal
+            title="Manage library categories"
+            description="Drag to reorder, rename inline, or remove categories. Deleting a category deletes all its entries."
+            categories={libraryCategories}
+            palette={NOTE_CAT_PALETTE}
+            reservedNames={[]}
+            onSave={handleManageLibraryCategories}
+            onClose={() => setModal(null)}
+          />
+        </Modal>
+      )}
+      {modal?.type === "addLibrary" && (
+        <Modal onClose={() => setModal(null)}>
+          <NoteEntryForm
+            onSave={text => addLibraryEntry(modal.category, text)}
+            onCancel={() => setModal(null)}
+            todoCategories={[
+              ...PRIORITIES.map(p => ({ name: p, label: `⚡ ${p}`, section: "priority", ...priorityColors[p] })),
+              ...flatCategories.map(c => ({ name: c, label: c, section: "flat", ...getCatColor(c, flatCategories) })),
+            ]}
+            onAddTodo={(todoText, cat) => {
+              const newItem = { id: uid(), text: todoText, bold: false, checked: false };
+              const newTodos = JSON.parse(JSON.stringify(data.todos));
+              if (cat.section === "priority") newTodos.priority[cat.name] = [...(newTodos.priority[cat.name] || []), newItem];
+              else newTodos.flat[cat.name] = [...(newTodos.flat[cat.name] || []), newItem];
+              persist({ ...data, todos: newTodos });
+            }}
+          />
+        </Modal>
+      )}
+      {modal?.type === "editLibrary" && (
+        <Modal onClose={() => setModal(null)}>
+          <NoteEntryForm
+            entry={modal.entry}
+            onSave={text => editLibraryEntry(modal.category, modal.entry.id, text)}
+            onCancel={() => setModal(null)}
+            onDelete={() => deleteLibraryEntry(modal.category, modal.entry.id)}
             todoCategories={[
               ...PRIORITIES.map(p => ({ name: p, label: `⚡ ${p}`, section: "priority", ...priorityColors[p] })),
               ...flatCategories.map(c => ({ name: c, label: c, section: "flat", ...getCatColor(c, flatCategories) })),
