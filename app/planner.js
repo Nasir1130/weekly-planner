@@ -1516,7 +1516,7 @@ export default function Planner() {
           if (plannedItems.length === 0) return null;
           return (
             <>
-              <div style={{ borderTop: "1.5px dashed #d4d3d0", margin: compact ? "5px 0 4px" : "8px 0 5px" }} />
+              <div style={{ borderTop: "1.5px solid #d4d3d0", margin: compact ? "5px 0 4px" : "8px 0 5px" }} />
               {plannedItems.map(item => {
                 const todoColor = item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#999996" : "#999996";
                 return (
@@ -1530,7 +1530,7 @@ export default function Planner() {
                     onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                   >
-                    <span style={{ color: "#d4d3d0", marginRight: compact ? 4 : 6 }}>–</span>{item.text}
+                    <span style={{ color: "#d4d3d0", marginRight: compact ? 4 : 6 }}>•</span>{item.text}
                   </div>
                 );
               })}
