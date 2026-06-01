@@ -327,6 +327,7 @@ const defaultData = () => ({
   library: {},            // { "Reference": [ { id, text, createdAt, updatedAt } ] }
   libraryCategories: DEFAULT_LIBRARY_CATEGORIES,
   libraryCollapsed: {},
+  categoryIndents: {},    // { "Assignments": 1 } — indent level per flat category
 });
 
 async function loadData() {
@@ -350,6 +351,7 @@ async function loadData() {
         library: data.library || {},
         libraryCategories: data.libraryCategories || DEFAULT_LIBRARY_CATEGORIES,
         libraryCollapsed: data.libraryCollapsed || {},
+        categoryIndents: data.categoryIndents || {},
       };
     }
     return null;
@@ -484,13 +486,20 @@ function RecurrenceTag({ recurrence }) {
 
 // ─── REUSABLE CATEGORY MANAGER (used for both todo + notes) ──────
 
-function ManageCategoriesModal({ title, description, categories, palette, onSave, onClose, reservedNames }) {
+function ManageCategoriesModal({ title, description, categories, palette, onSave, onClose, reservedNames, indents }) {
   const [cats, setCats] = useState(categories.map(c => ({ name: c, originalName: c })));
+  const [catIndents, setCatIndents] = useState(() => {
+    const result = {};
+    categories.forEach(c => { result[c] = (indents || {})[c] || 0; });
+    return result;
+  });
   const [newCat, setNewCat] = useState("");
   const [error, setError] = useState("");
   const [dragIdx, setDragIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
   const newRef = useRef(null);
+  const showIndent = !!indents || indents === undefined ? false : false; // show if indents prop passed
+  const hasIndents = indents !== undefined;
 
   const addCat = () => {
     const trimmed = newCat.trim();
@@ -500,19 +509,33 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
       return;
     }
     setCats([...cats, { name: trimmed, originalName: null }]);
+    setCatIndents({ ...catIndents, [trimmed]: 0 });
     setNewCat("");
     setError("");
   };
 
   const renameCat = (idx, newName) => {
+    const oldName = cats[idx].name;
     const updated = [...cats];
     updated[idx] = { ...updated[idx], name: newName };
     setCats(updated);
+    if (hasIndents && oldName !== newName) {
+      const ni = { ...catIndents };
+      ni[newName] = ni[oldName] || 0;
+      delete ni[oldName];
+      setCatIndents(ni);
+    }
     setError("");
   };
 
   const removeCat = (idx) => {
+    const name = cats[idx].name;
     setCats(cats.filter((_, i) => i !== idx));
+    if (hasIndents) {
+      const ni = { ...catIndents };
+      delete ni[name];
+      setCatIndents(ni);
+    }
     setError("");
   };
 
@@ -522,6 +545,11 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
     const [item] = updated.splice(fromIdx, 1);
     updated.splice(toIdx, 0, item);
     setCats(updated);
+  };
+
+  const setIndent = (catName, level) => {
+    const clamped = Math.max(0, Math.min(2, level));
+    setCatIndents({ ...catIndents, [catName]: clamped });
   };
 
   const handleCatDragStart = (e, idx) => {
@@ -563,7 +591,13 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
       else if (match.name.trim() !== orig) renames[orig] = match.name.trim();
     });
     const additions = cats.filter(c => c.originalName === null).map(c => c.name.trim());
-    onSave({ finalOrder: names, renames, deletions, additions });
+    // Build final indents keyed by final names
+    const finalIndents = {};
+    names.forEach(name => {
+      const level = catIndents[name] || 0;
+      if (level > 0) finalIndents[name] = level;
+    });
+    onSave({ finalOrder: names, renames, deletions, additions, indents: finalIndents });
   };
 
   return (
@@ -573,6 +607,7 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
       {cats.map((cat, idx) => {
         const cc = palette[idx % palette.length];
         const isOver = dragOverIdx === idx && dragIdx !== idx;
+        const indent = catIndents[cat.name] || 0;
         return (
           <div key={cat.originalName || `new-${idx}`}>
             {isOver && dragIdx !== null && dragIdx > idx && (
@@ -581,10 +616,23 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
             <div draggable onDragStart={e => handleCatDragStart(e, idx)} onDragEnd={handleCatDragEnd}
               onDragOver={e => handleCatDragOver(e, idx)} onDrop={e => handleCatDrop(e, idx)}
               style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0",
-                background: dragIdx === idx ? "#f2f1ee" : "transparent", borderRadius: 6, transition: "background 0.1s" }}>
+                paddingLeft: hasIndents ? indent * 20 : 0,
+                background: dragIdx === idx ? "#f2f1ee" : "transparent", borderRadius: 6, transition: "background 0.1s, padding-left 0.15s" }}>
               <span style={{ fontSize: 12, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none", flexShrink: 0 }} title="Drag to reorder">&#8942;</span>
               <span style={{ width: 12, height: 12, borderRadius: "50%", background: cc.text, flexShrink: 0 }} />
               <input value={cat.name} onChange={e => renameCat(idx, e.target.value)} style={{ flex: 1, fontSize: 14, padding: "6px 10px" }} />
+              {hasIndents && (
+                <div style={{ display: "flex", gap: 1, flexShrink: 0 }}>
+                  <button onClick={() => setIndent(cat.name, indent - 1)} disabled={indent === 0} style={{
+                    fontSize: 11, lineHeight: 1, padding: "2px 5px", border: "none", background: "transparent",
+                    color: indent === 0 ? "#d4d3d0" : "#999996", cursor: indent === 0 ? "default" : "pointer",
+                  }} title="Outdent">&#8592;</button>
+                  <button onClick={() => setIndent(cat.name, indent + 1)} disabled={indent >= 2} style={{
+                    fontSize: 11, lineHeight: 1, padding: "2px 5px", border: "none", background: "transparent",
+                    color: indent >= 2 ? "#d4d3d0" : "#999996", cursor: indent >= 2 ? "default" : "pointer",
+                  }} title="Indent">&#8594;</button>
+                </div>
+              )}
               <div style={{ display: "flex", flexDirection: "column", gap: 0, flexShrink: 0 }}>
                 <button onClick={() => moveCat(idx, idx - 1)} disabled={idx === 0} style={{
                   fontSize: 9, lineHeight: 1, padding: "1px 4px", border: "none", background: "transparent",
@@ -1168,7 +1216,7 @@ export default function Planner() {
   };
 
   // ─── CATEGORY MANAGEMENT (todos) ───
-  const handleManageCategories = ({ finalOrder, renames, deletions, additions }) => {
+  const handleManageCategories = ({ finalOrder, renames, deletions, additions, indents: newIndents }) => {
     const newTodos = JSON.parse(JSON.stringify(data.todos));
     const newCollapsed = { ...data.collapsed };
     let newCompleted = [...data.completed];
@@ -1181,7 +1229,7 @@ export default function Planner() {
     additions.forEach(cat => { if (!newTodos.flat[cat]) newTodos.flat[cat] = []; });
     const reorderedFlat = {};
     finalOrder.forEach(name => { reorderedFlat[name] = newTodos.flat[name] || []; });
-    persist({ ...data, todos: { ...newTodos, flat: reorderedFlat }, collapsed: newCollapsed, completed: newCompleted, flatCategories: finalOrder });
+    persist({ ...data, todos: { ...newTodos, flat: reorderedFlat }, collapsed: newCollapsed, completed: newCompleted, flatCategories: finalOrder, categoryIndents: newIndents || {} });
     setModal(null);
   };
 
@@ -1678,11 +1726,12 @@ export default function Planner() {
           {flatCategories.map(cat => {
             const items = data.todos.flat[cat] || [];
             const cc = getCatColor(cat, flatCategories);
+            const indent = (data.categoryIndents || {})[cat] || 0;
             return (
-              <div key={cat} style={{ marginBottom: 12 }}>
+              <div key={cat} style={{ marginBottom: 12, marginLeft: indent * 24 }}>
                 <div onClick={() => toggleCollapse(cat)} style={{ display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none", padding: "6px 0", borderBottom: "0.5px solid #d4d3d0" }}>
                   <CollapseArrow collapsed={data.collapsed[cat]} />
-                  <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>{cat}</span>
+                  <span style={{ fontSize: indent > 0 ? 13 : 14, fontWeight: 500, color: indent > 0 ? "#666663" : "#1a1a1a" }}>{cat}</span>
                   <button onClick={e => { e.stopPropagation(); setModal({ type: "addTodo", section: "flat", subKey: cat }); }} style={{ fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6, background: "transparent", color: "#999996", cursor: "pointer" }}>+</button>
                   <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{items.length}</span>
                 </div>
@@ -2051,10 +2100,11 @@ export default function Planner() {
         <Modal onClose={() => setModal(null)}>
           <ManageCategoriesModal
             title="Manage to-do categories"
-            description="Drag to reorder, rename inline, or remove categories. Deleting a category also deletes its items."
+            description="Drag to reorder, rename inline, or remove categories. Use ← → arrows to indent subcategories."
             categories={flatCategories}
             palette={FLAT_CAT_PALETTE}
             reservedNames={PRIORITIES}
+            indents={data.categoryIndents || {}}
             onSave={handleManageCategories}
             onClose={() => setModal(null)}
           />
