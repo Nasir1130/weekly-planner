@@ -1534,6 +1534,27 @@ export default function Planner() {
                   e.target.value = "";
                 }}
               />
+              <button onClick={() => {
+                const exportData = {
+                  _schema: "Weekly Planner Data Export. Structure: 'schedule' contains events by day (Mon-Sun) with time, text, category (Client/Class/Personal), recurrence (none/weekly/biweekly), notes, skipDates, weekOverrides, endDate. 'todos.priority' has items by priority level (Very High/High/Med/Low). 'todos.flat' has items by custom category. 'completed' tracks done items with timestamps and source category. 'notes' contains weekly journal entries keyed by Monday date then category. 'library' contains permanent notes keyed by category. 'weeklyTaskChecks' tracks weekly task completion. 'manualWeeklyTasks' are user-added recurring tasks. 'flatCategories'/'noteCategories'/'libraryCategories' define category order. 'categoryIndents' controls visual hierarchy of todo categories. Events with generateTask:true create weekly tasks. Events with weekOverrides have single-week changes including day moves.",
+                  _exportedAt: new Date().toISOString(),
+                  ...data,
+                };
+                const json = JSON.stringify(exportData, null, 2);
+                const blob = new Blob([json], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                const dateStr = new Date().toISOString().slice(0, 10);
+                a.download = `planner-backup-${dateStr}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }} style={{
+                fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
+              }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
+              >Export</button>
             </div>
           </div>
           {/* Week navigation */}
