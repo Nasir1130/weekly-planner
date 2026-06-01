@@ -848,10 +848,11 @@ const TODO_COLORS = [
   { name: "teal", color: "#1A7A7A", label: "Teal" },
 ];
 
-function TodoItemForm({ item, onSave, onCancel, onDelete, categories }) {
+function TodoItemForm({ item, onSave, onCancel, onDelete, categories, viewingMonday }) {
   const [text, setText] = useState(item?.text || "");
   const [bold, setBold] = useState(item?.bold || false);
   const [color, setColor] = useState(item?.color || "none");
+  const [plannedDay, setPlannedDay] = useState(item?.plannedWeek === viewingMonday ? (item?.plannedDay || "") : "");
   const [category, setCategory] = useState(item?._moveTarget || "");
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -859,7 +860,7 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 16, fontWeight: 500 }}>{item ? "Edit item" : "New item"}</div>
       <input ref={inputRef} placeholder="What needs doing?" value={text} onChange={e => setText(e.target.value)}
-        onKeyDown={e => { if (e.key === "Enter" && text.trim()) onSave({ text, bold, color, moveTarget: category }); }} />
+        onKeyDown={e => { if (e.key === "Enter" && text.trim()) onSave({ text, bold, color, plannedDay, moveTarget: category }); }} />
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666663", cursor: "pointer" }}>
           <input type="checkbox" checked={bold} onChange={e => setBold(e.target.checked)} /> Bold
@@ -884,10 +885,28 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories }) {
           </select>
         )}
       </div>
+      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: "#666663", marginRight: 2 }}>Plan for:</span>
+        {DAYS.map(d => (
+          <button key={d} onClick={() => setPlannedDay(plannedDay === d ? "" : d)} style={{
+            fontSize: 11, padding: "3px 7px",
+            background: plannedDay === d ? "#EAF3DE" : "transparent",
+            color: plannedDay === d ? "#3B6D11" : "#999996",
+            borderColor: plannedDay === d ? "#C0DD97" : "#d4d3d0",
+            cursor: "pointer",
+          }}>{d}</button>
+        ))}
+        {plannedDay && (
+          <button onClick={() => setPlannedDay("")} style={{
+            fontSize: 11, padding: "3px 6px", border: "none", background: "transparent",
+            color: "#999996", cursor: "pointer",
+          }}>✕</button>
+        )}
+      </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
         {item && onDelete && <button onClick={onDelete} style={{ color: "#A32D2D", borderColor: "#F09595", marginRight: "auto" }}>Delete</button>}
         <button onClick={onCancel}>Cancel</button>
-        <button onClick={() => { if (text.trim()) onSave({ text, bold, color, moveTarget: category }); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
+        <button onClick={() => { if (text.trim()) onSave({ text, bold, color, plannedDay, moveTarget: category }); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
       </div>
     </div>
   );
@@ -1145,6 +1164,7 @@ export default function Planner() {
   const addTodoItem = (section, subKey, item) => {
     const newItem = { id: uid(), text: item.text, bold: item.bold, checked: false };
     if (item.color && item.color !== "none") newItem.color = item.color;
+    if (item.plannedDay) { newItem.plannedDay = item.plannedDay; newItem.plannedWeek = viewingMonday; }
     const newTodos = { ...data.todos };
     if (section === "priority") newTodos.priority = { ...newTodos.priority, [subKey]: [...newTodos.priority[subKey], newItem] };
     else newTodos.flat = { ...newTodos.flat, [subKey]: [...newTodos.flat[subKey], newItem] };
@@ -1155,6 +1175,11 @@ export default function Planner() {
   const editTodoItem = (section, subKey, itemId, updates) => {
     const newTodos = { ...data.todos };
     const colorVal = updates.color && updates.color !== "none" ? updates.color : undefined;
+    const applyPlanned = (item) => {
+      if (updates.plannedDay) { item.plannedDay = updates.plannedDay; item.plannedWeek = viewingMonday; }
+      else { delete item.plannedDay; delete item.plannedWeek; }
+      return item;
+    };
     if (updates.moveTarget && updates.moveTarget !== subKey) {
       const sourceList = section === "priority" ? newTodos.priority : newTodos.flat;
       const item = sourceList[subKey].find(it => it.id === itemId);
@@ -1163,6 +1188,7 @@ export default function Planner() {
       const targetSection = isPriorityTarget ? newTodos.priority : newTodos.flat;
       const updated = { ...item, text: updates.text, bold: updates.bold };
       if (colorVal) updated.color = colorVal; else delete updated.color;
+      applyPlanned(updated);
       targetSection[updates.moveTarget] = [...targetSection[updates.moveTarget], updated];
     } else {
       const list = section === "priority" ? newTodos.priority : newTodos.flat;
@@ -1170,6 +1196,7 @@ export default function Planner() {
         if (it.id !== itemId) return it;
         const updated = { ...it, text: updates.text, bold: updates.bold };
         if (colorVal) updated.color = colorVal; else delete updated.color;
+        applyPlanned(updated);
         return updated;
       });
     }
@@ -1474,6 +1501,42 @@ export default function Planner() {
             </div>
           );
         })}
+        {/* Planned todos for this day */}
+        {(() => {
+          const plannedItems = [];
+          [...PRIORITIES, ...flatCategories].forEach(key => {
+            const isPriority = PRIORITIES.includes(key);
+            const list = isPriority ? (data.todos.priority[key] || []) : (data.todos.flat[key] || []);
+            list.forEach(item => {
+              if (item.plannedDay === day && item.plannedWeek === viewingMonday) {
+                plannedItems.push({ ...item, _section: isPriority ? "priority" : "flat", _subKey: key });
+              }
+            });
+          });
+          if (plannedItems.length === 0) return null;
+          return (
+            <>
+              <div style={{ borderTop: "0.5px dashed #d4d3d0", margin: compact ? "4px 0 3px" : "6px 0 4px" }} />
+              {plannedItems.map(item => {
+                const todoColor = item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#999996" : "#999996";
+                return (
+                  <div key={item.id} onClick={() => setModal({ type: "editTodo", section: item._section, subKey: item._subKey, item: { ...item, _moveTarget: "" } })}
+                    style={{
+                      fontSize: compact ? 11 : 13, lineHeight: 1.5, color: todoColor,
+                      padding: compact ? "1px 4px" : "2px 8px", margin: "0 -4px",
+                      cursor: "pointer", borderRadius: 4,
+                      fontStyle: "italic",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  >
+                    {item.text}
+                  </div>
+                );
+              })}
+            </>
+          );
+        })()}
       </div>
     );
   };
@@ -1730,6 +1793,7 @@ export default function Planner() {
                             <span onClick={() => setModal({ type: "editTodo", section: "priority", subKey: priority, item: { ...item, _moveTarget: "" } })}
                               style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
                               onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
+                            {item.plannedDay && item.plannedWeek === viewingMonday && <span style={{ fontSize: 10, color: "#3B6D11", background: "#EAF3DE", padding: "1px 5px", borderRadius: 4, marginLeft: 4, whiteSpace: "nowrap" }}>→ {item.plannedDay}</span>}
                             <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
                           </div>
                           {idx === items.length - 1 && isDropHere("priority", priority, idx + 1) && dropIndicator}
@@ -1771,6 +1835,7 @@ export default function Planner() {
                           <span onClick={() => setModal({ type: "editTodo", section: "flat", subKey: cat, item: { ...item, _moveTarget: "" } })}
                             style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
                             onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
+                          {item.plannedDay && item.plannedWeek === viewingMonday && <span style={{ fontSize: 10, color: "#3B6D11", background: "#EAF3DE", padding: "1px 5px", borderRadius: 4, marginLeft: 4, whiteSpace: "nowrap" }}>→ {item.plannedDay}</span>}
                           <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
                         </div>
                         {idx === items.length - 1 && isDropHere("flat", cat, idx + 1) && dropIndicator}
@@ -2076,12 +2141,13 @@ export default function Planner() {
       )}
       {modal?.type === "addTodo" && (
         <Modal onClose={() => setModal(null)}>
-          <TodoItemForm onSave={item => addTodoItem(modal.section, modal.subKey, item)} onCancel={() => setModal(null)} />
+          <TodoItemForm viewingMonday={viewingMonday} onSave={item => addTodoItem(modal.section, modal.subKey, item)} onCancel={() => setModal(null)} />
         </Modal>
       )}
       {modal?.type === "editTodo" && (
         <Modal onClose={() => setModal(null)}>
           <TodoItemForm item={modal.item}
+            viewingMonday={viewingMonday}
             categories={allMoveTargets.filter(c => c !== modal.subKey)}
             onSave={updates => editTodoItem(modal.section, modal.subKey, modal.item.id, updates)}
             onCancel={() => setModal(null)}
