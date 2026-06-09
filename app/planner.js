@@ -1043,6 +1043,10 @@ export default function Planner() {
     const today = new Date().getDay();
     return today === 0 ? 6 : today - 1;
   });
+  const [desktopDayIndex, setDesktopDayIndex] = useState(() => {
+    const today = new Date().getDay();
+    return today === 0 ? 6 : today - 1;
+  });
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -1058,13 +1062,15 @@ export default function Planner() {
     });
   }, []);
 
-  // Reset mobile day to today when returning to current week
+  // Reset day indices when changing weeks
   useEffect(() => {
     if (weekOffset === 0) {
       const today = new Date().getDay();
       setMobileDayIndex(today === 0 ? 6 : today - 1);
+      setDesktopDayIndex(today === 0 ? 6 : today - 1);
     } else {
       setMobileDayIndex(0);
+      setDesktopDayIndex(0);
     }
   }, [weekOffset]);
 
@@ -1574,6 +1580,14 @@ export default function Planner() {
                 onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
                 onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
               >{data.hideCalendar ? "Show" : "Hide"}</button>
+              {!isMobile && !data.hideCalendar && (
+                <button onClick={() => persist({ ...data, calendarView: (data.calendarView || "week") === "week" ? "day" : "week" })} style={{
+                  fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
+                >{(data.calendarView || "week") === "week" ? "Day view" : "Week view"}</button>
+              )}
               <button onClick={() => document.getElementById("ics-file-input")?.click()} style={{
                 fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
               }}
@@ -1635,10 +1649,61 @@ export default function Planner() {
           {/* Mobile day navigation */}
           {isMobile && !data.hideCalendar && mobileDayNav}
         </div>
-        {/* Desktop: 7-column grid */}
-        {!data.hideCalendar && !isMobile && (
+        {/* Desktop: 7-column grid (week view) */}
+        {!data.hideCalendar && !isMobile && (data.calendarView || "week") === "week" && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 }}>
             {DAYS.map((day, i) => renderDayEvents(day, weekDates[i], { compact: true }))}
+          </div>
+        )}
+        {/* Desktop: spotlight day view */}
+        {!data.hideCalendar && !isMobile && (data.calendarView || "week") === "day" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
+              <button onClick={() => {
+                if (desktopDayIndex > 0) setDesktopDayIndex(desktopDayIndex - 1);
+                else { setWeekOffset(weekOffset - 1); setDesktopDayIndex(6); }
+              }} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
+              <span style={{ fontSize: 16, fontWeight: 600, color: "#1a1a1a", minWidth: 100, textAlign: "center" }}>
+                {DAYS[desktopDayIndex]} {formatDate(weekDates[desktopDayIndex])}
+              </span>
+              <button onClick={() => {
+                if (desktopDayIndex < 6) setDesktopDayIndex(desktopDayIndex + 1);
+                else { setWeekOffset(weekOffset + 1); setDesktopDayIndex(0); }
+              }} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 3fr 1fr", gap: 8, alignItems: "start" }}>
+              <div style={{ opacity: 0.5, cursor: "pointer", transition: "opacity 0.15s" }}
+                onClick={() => {
+                  if (desktopDayIndex > 0) setDesktopDayIndex(desktopDayIndex - 1);
+                  else { setWeekOffset(weekOffset - 1); setDesktopDayIndex(6); }
+                }}
+                onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
+                onMouseLeave={e => e.currentTarget.style.opacity = "0.5"}
+              >
+                {renderDayEvents(
+                  DAYS[desktopDayIndex > 0 ? desktopDayIndex - 1 : 6],
+                  weekDates[desktopDayIndex > 0 ? desktopDayIndex - 1 : 6],
+                  { compact: true }
+                )}
+              </div>
+              <div>
+                {renderDayEvents(DAYS[desktopDayIndex], weekDates[desktopDayIndex], { compact: false })}
+              </div>
+              <div style={{ opacity: 0.5, cursor: "pointer", transition: "opacity 0.15s" }}
+                onClick={() => {
+                  if (desktopDayIndex < 6) setDesktopDayIndex(desktopDayIndex + 1);
+                  else { setWeekOffset(weekOffset + 1); setDesktopDayIndex(0); }
+                }}
+                onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
+                onMouseLeave={e => e.currentTarget.style.opacity = "0.5"}
+              >
+                {renderDayEvents(
+                  DAYS[desktopDayIndex < 6 ? desktopDayIndex + 1 : 0],
+                  weekDates[desktopDayIndex < 6 ? desktopDayIndex + 1 : 0],
+                  { compact: true }
+                )}
+              </div>
+            </div>
           </div>
         )}
         {/* Mobile: single day view */}
