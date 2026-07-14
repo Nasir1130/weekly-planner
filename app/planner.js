@@ -1839,32 +1839,40 @@ export default function Planner() {
                 {[["Very High", "High"], ["Med", "Low"]].map(row => row.map(priority => {
                   const pc = priorityColors[priority];
                   const items = data.todos.priority[priority] || [];
+                  const collapseKey = "pri_" + priority;
+                  const isCollapsed = data.collapsed[collapseKey];
                   return (
                     <div key={priority} style={{ marginBottom: 6 }}
-                      onDragOver={e => { if (items.length === 0) handleDragOver(e, "priority", priority, 0); }}
-                      onDrop={e => { if (items.length === 0) handleDrop(e, "priority", priority, 0); }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                      onDragOver={e => { if (items.length === 0 && !isCollapsed) handleDragOver(e, "priority", priority, 0); }}
+                      onDrop={e => { if (items.length === 0 && !isCollapsed) handleDrop(e, "priority", priority, 0); }}>
+                      <div onClick={() => toggleCollapse(collapseKey)} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: isCollapsed ? 0 : 4, cursor: "pointer", userSelect: "none" }}>
+                        <CollapseArrow collapsed={isCollapsed} />
                         <span style={{ fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: "8px", background: pc.bg, color: pc.text }}>{priority}</span>
-                        <button onClick={() => setModal({ type: "addTodo", section: "priority", subKey: priority })} style={{ fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", background: "transparent", color: "#999996", cursor: "pointer" }}>+</button>
+                        <button onClick={e => { e.stopPropagation(); setModal({ type: "addTodo", section: "priority", subKey: priority }); }} style={{ fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", background: "transparent", color: "#999996", cursor: "pointer" }}>+</button>
+                        {isCollapsed && items.length > 0 && <span style={{ fontSize: 11, color: "#999996" }}>{items.length}</span>}
                       </div>
-                      {items.length === 0 && <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic", border: isDropHere("priority", priority, 0) ? "1px dashed #85B7EB" : "1px dashed transparent", borderRadius: 4, padding: "4px 8px" }}>nothing current</div>}
-                      {items.map((item, idx) => (
-                        <div key={item.id}>
-                          {isDropHere("priority", priority, idx) && dropIndicator}
-                          <div draggable onDragStart={e => handleDragStart(e, "priority", priority, item.id)} onDragEnd={handleDragEnd}
-                            onDragOver={e => handleDragOver(e, "priority", priority, idx)} onDrop={e => handleDrop(e, "priority", priority, idx)}
-                            style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px", cursor: "grab" }}>
-                            <input type="checkbox" checked={false} onChange={() => checkTodoItem("priority", priority, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
-                            <span onClick={() => setModal({ type: "editTodo", section: "priority", subKey: priority, item: { ...item, _moveTarget: "" } })}
-                              style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
-                              onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
-                            {item.plannedDay && item.plannedWeek === viewingMonday && <span style={{ fontSize: 10, color: "#3B6D11", background: "#EAF3DE", padding: "1px 5px", borderRadius: 4, marginLeft: 4, whiteSpace: "nowrap" }}>→ {item.plannedDay}</span>}
-                            <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
-                          </div>
-                          {idx === items.length - 1 && isDropHere("priority", priority, idx + 1) && dropIndicator}
-                        </div>
-                      ))}
-                      {items.length > 0 && <div style={{ height: 4 }} onDragOver={e => handleDragOver(e, "priority", priority, items.length)} onDrop={e => handleDrop(e, "priority", priority, items.length)} />}
+                      {!isCollapsed && (
+                        <>
+                          {items.length === 0 && <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic", border: isDropHere("priority", priority, 0) ? "1px dashed #85B7EB" : "1px dashed transparent", borderRadius: 4, padding: "4px 8px" }}>nothing current</div>}
+                          {items.map((item, idx) => (
+                            <div key={item.id}>
+                              {isDropHere("priority", priority, idx) && dropIndicator}
+                              <div draggable onDragStart={e => handleDragStart(e, "priority", priority, item.id)} onDragEnd={handleDragEnd}
+                                onDragOver={e => handleDragOver(e, "priority", priority, idx)} onDrop={e => handleDrop(e, "priority", priority, idx)}
+                                style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px", cursor: "grab" }}>
+                                <input type="checkbox" checked={false} onChange={() => checkTodoItem("priority", priority, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
+                                <span onClick={() => setModal({ type: "editTodo", section: "priority", subKey: priority, item: { ...item, _moveTarget: "" } })}
+                                  style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
+                                  onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
+                                {item.plannedDay && item.plannedWeek === viewingMonday && <span style={{ fontSize: 10, color: "#3B6D11", background: "#EAF3DE", padding: "1px 5px", borderRadius: 4, marginLeft: 4, whiteSpace: "nowrap" }}>→ {item.plannedDay}</span>}
+                                <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
+                              </div>
+                              {idx === items.length - 1 && isDropHere("priority", priority, idx + 1) && dropIndicator}
+                            </div>
+                          ))}
+                          {items.length > 0 && <div style={{ height: 4 }} onDragOver={e => handleDragOver(e, "priority", priority, items.length)} onDrop={e => handleDrop(e, "priority", priority, items.length)} />}
+                        </>
+                      )}
                     </div>
                   );
                 }))}
