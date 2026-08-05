@@ -1037,6 +1037,8 @@ export default function Planner() {
   const [modal, setModal] = useState(null);
   const [dragItem, setDragItem] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
+  const dragItemRef = useRef(null);
+  const dropTargetRef = useRef(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileDayIndex, setMobileDayIndex] = useState(() => {
@@ -1372,32 +1374,58 @@ export default function Planner() {
   const allMoveTargets = [...PRIORITIES, ...flatCategories];
 
   const handleDragStart = (e, section, subKey, itemId) => {
-    setDragItem({ section, subKey, itemId });
+    const payload = { section, subKey, itemId };
+    dragItemRef.current = payload;
+    setDragItem(payload);
     e.dataTransfer.effectAllowed = "move";
     e.dataTransfer.setData("text/plain", itemId);
     e.currentTarget.style.opacity = "0.4";
   };
-  const handleDragEnd = (e) => { e.currentTarget.style.opacity = "1"; setDragItem(null); setDropTarget(null); };
-  const handleDragOver = (e, section, subKey, insertIndex) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDropTarget({ section, subKey, insertIndex }); };
+  const handleDragEnd = (e) => {
+    e.currentTarget.style.opacity = "1";
+    dragItemRef.current = null;
+    setDragItem(null);
+    setDropTarget(null);
+  };
+  // Only update state when the drop target actually changes — prevents
+  // re-render churn that can cancel the drop mid-drag.
+  const handleDragOver = (e, section, subKey, insertIndex) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    const cur = dropTargetRef.current;
+    if (!cur || cur.section !== section || cur.subKey !== subKey || cur.insertIndex !== insertIndex) {
+      dropTargetRef.current = { section, subKey, insertIndex };
+      setDropTarget({ section, subKey, insertIndex });
+    }
+  };
   const handleDrop = (e, targetSection, targetSubKey, insertIndex) => {
     e.preventDefault();
-    if (!dragItem) return;
-    const { section: srcSection, subKey: srcSubKey, itemId } = dragItem;
+    e.stopPropagation();
+    const drag = dragItemRef.current || dragItem;
+    if (!drag) return;
+    const { section: srcSection, subKey: srcSubKey, itemId } = drag;
     const newTodos = JSON.parse(JSON.stringify(data.todos));
     const srcList = srcSection === "priority" ? newTodos.priority[srcSubKey] : newTodos.flat[srcSubKey];
+    if (!srcList) return;
     const srcIdx = srcList.findIndex(it => it.id === itemId);
     if (srcIdx === -1) return;
     const [item] = srcList.splice(srcIdx, 1);
     const targetList = targetSection === "priority" ? newTodos.priority[targetSubKey] : newTodos.flat[targetSubKey];
-    let idx = insertIndex;
-    if (srcSection === targetSection && srcSubKey === targetSubKey && srcIdx < insertIndex) idx--;
+    if (!targetList) return;
+    let idx = insertIndex === undefined || insertIndex === null ? targetList.length : insertIndex;
+    if (srcSection === targetSection && srcSubKey === targetSubKey && srcIdx < idx) idx--;
     if (idx < 0) idx = 0;
     if (idx > targetList.length) idx = targetList.length;
     targetList.splice(idx, 0, item);
     persist({ ...data, todos: newTodos });
-    setDragItem(null); setDropTarget(null);
+    dragItemRef.current = null;
+    dropTargetRef.current = null;
+    setDragItem(null);
+    setDropTarget(null);
   };
   const isDropHere = (section, subKey, index) => dropTarget && dropTarget.section === section && dropTarget.subKey === subKey && dropTarget.insertIndex === index;
+  const isDropInSection = (section, subKey) => dropTarget && dropTarget.section === section && dropTarget.subKey === subKey;
   const dropIndicator = <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "1px 8px" }} />;
 
   const priorityColors = {
@@ -1842,9 +1870,15 @@ export default function Planner() {
                   const collapseKey = "pri_" + priority;
                   const isCollapsed = data.collapsed[collapseKey];
                   return (
-                    <div key={priority} style={{ marginBottom: 6 }}
-                      onDragOver={e => { if (items.length === 0 && !isCollapsed) handleDragOver(e, "priority", priority, 0); }}
-                      onDrop={e => { if (items.length === 0 && !isCollapsed) handleDrop(e, "priority", priority, 0); }}>
+                    <div key={priority} style={{
+                      marginBottom: 6,
+                      borderRadius: 6,
+                      background: isDropInSection("priority", priority) ? "#F4F9FE" : "transparent",
+                      outline: isDropInSection("priority", priority) ? "1px dashed #85B7EB" : "1px dashed transparent",
+                      transition: "background 0.1s",
+                    }}
+                      onDragOver={e => { if (!isCollapsed) handleDragOver(e, "priority", priority, items.length); }}
+                      onDrop={e => { if (!isCollapsed) handleDrop(e, "priority", priority, items.length); }}>
                       <div onClick={() => toggleCollapse(collapseKey)} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: isCollapsed ? 0 : 4, cursor: "pointer", userSelect: "none" }}>
                         <CollapseArrow collapsed={isCollapsed} />
                         <span style={{ fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: "8px", background: pc.bg, color: pc.text }}>{priority}</span>
@@ -1853,13 +1887,19 @@ export default function Planner() {
                       </div>
                       {!isCollapsed && (
                         <>
-                          {items.length === 0 && <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic", border: isDropHere("priority", priority, 0) ? "1px dashed #85B7EB" : "1px dashed transparent", borderRadius: 4, padding: "4px 8px" }}>nothing current</div>}
+                          {items.length === 0 && (
+                            <div
+                              onDragOver={e => handleDragOver(e, "priority", priority, 0)}
+                              onDrop={e => handleDrop(e, "priority", priority, 0)}
+                              style={{ fontSize: 12, color: "#999996", fontStyle: "italic", borderRadius: 4, padding: "8px 8px", minHeight: 28 }}
+                            >nothing current</div>
+                          )}
                           {items.map((item, idx) => (
                             <div key={item.id}>
                               {isDropHere("priority", priority, idx) && dropIndicator}
                               <div draggable onDragStart={e => handleDragStart(e, "priority", priority, item.id)} onDragEnd={handleDragEnd}
                                 onDragOver={e => handleDragOver(e, "priority", priority, idx)} onDrop={e => handleDrop(e, "priority", priority, idx)}
-                                style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px", cursor: "grab" }}>
+                                style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "4px 0 4px 8px", cursor: "grab" }}>
                                 <input type="checkbox" checked={false} onChange={() => checkTodoItem("priority", priority, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
                                 <span onClick={() => setModal({ type: "editTodo", section: "priority", subKey: priority, item: { ...item, _moveTarget: "" } })}
                                   style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
@@ -1870,7 +1910,7 @@ export default function Planner() {
                               {idx === items.length - 1 && isDropHere("priority", priority, idx + 1) && dropIndicator}
                             </div>
                           ))}
-                          {items.length > 0 && <div style={{ height: 4 }} onDragOver={e => handleDragOver(e, "priority", priority, items.length)} onDrop={e => handleDrop(e, "priority", priority, items.length)} />}
+                          {items.length > 0 && <div style={{ height: 16 }} onDragOver={e => handleDragOver(e, "priority", priority, items.length)} onDrop={e => handleDrop(e, "priority", priority, items.length)} />}
                         </>
                       )}
                     </div>
@@ -1887,23 +1927,42 @@ export default function Planner() {
             const indent = (data.categoryIndents || {})[cat] || 0;
             return (
               <div key={cat} style={{ marginBottom: 12, marginLeft: indent * 24 }}>
-                <div onClick={() => toggleCollapse(cat)} style={{ display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none", padding: "6px 0", borderBottom: "0.5px solid #d4d3d0" }}>
+                <div onClick={() => toggleCollapse(cat)}
+                  onDragOver={e => { if (data.collapsed[cat]) handleDragOver(e, "flat", cat, items.length); }}
+                  onDrop={e => { if (data.collapsed[cat]) handleDrop(e, "flat", cat, items.length); }}
+                  style={{
+                    display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none",
+                    padding: "6px 0", borderBottom: "0.5px solid #d4d3d0",
+                    background: data.collapsed[cat] && isDropInSection("flat", cat) ? "#F4F9FE" : "transparent",
+                    borderRadius: 4,
+                  }}>
                   <CollapseArrow collapsed={data.collapsed[cat]} />
                   <span style={{ fontSize: indent > 0 ? 13 : 14, fontWeight: 500, color: indent > 0 ? "#666663" : "#1a1a1a" }}>{cat}</span>
                   <button onClick={e => { e.stopPropagation(); setModal({ type: "addTodo", section: "flat", subKey: cat }); }} style={{ fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6, background: "transparent", color: "#999996", cursor: "pointer" }}>+</button>
                   <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{items.length}</span>
                 </div>
                 {!data.collapsed[cat] && (
-                  <div style={{ paddingLeft: 4, paddingTop: 6 }}
-                    onDragOver={e => { if (items.length === 0) handleDragOver(e, "flat", cat, 0); }}
-                    onDrop={e => { if (items.length === 0) handleDrop(e, "flat", cat, 0); }}>
-                    {items.length === 0 && <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic", border: isDropHere("flat", cat, 0) ? "1px dashed #85B7EB" : "1px dashed transparent", borderRadius: 4, padding: "4px 8px" }}>nothing here</div>}
+                  <div style={{
+                    paddingLeft: 4, paddingTop: 6, borderRadius: 6,
+                    background: isDropInSection("flat", cat) ? "#F4F9FE" : "transparent",
+                    outline: isDropInSection("flat", cat) ? "1px dashed #85B7EB" : "1px dashed transparent",
+                    transition: "background 0.1s",
+                  }}
+                    onDragOver={e => handleDragOver(e, "flat", cat, items.length)}
+                    onDrop={e => handleDrop(e, "flat", cat, items.length)}>
+                    {items.length === 0 && (
+                      <div
+                        onDragOver={e => handleDragOver(e, "flat", cat, 0)}
+                        onDrop={e => handleDrop(e, "flat", cat, 0)}
+                        style={{ fontSize: 12, color: "#999996", fontStyle: "italic", borderRadius: 4, padding: "8px 8px", minHeight: 28 }}
+                      >nothing here</div>
+                    )}
                     {items.map((item, idx) => (
                       <div key={item.id}>
                         {isDropHere("flat", cat, idx) && dropIndicator}
                         <div draggable onDragStart={e => handleDragStart(e, "flat", cat, item.id)} onDragEnd={handleDragEnd}
                           onDragOver={e => handleDragOver(e, "flat", cat, idx)} onDrop={e => handleDrop(e, "flat", cat, idx)}
-                          style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 8px", cursor: "grab" }}>
+                          style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "4px 0 4px 8px", cursor: "grab" }}>
                           <input type="checkbox" checked={false} onChange={() => checkTodoItem("flat", cat, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
                           <span onClick={() => setModal({ type: "editTodo", section: "flat", subKey: cat, item: { ...item, _moveTarget: "" } })}
                             style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
@@ -1914,7 +1973,7 @@ export default function Planner() {
                         {idx === items.length - 1 && isDropHere("flat", cat, idx + 1) && dropIndicator}
                       </div>
                     ))}
-                    {items.length > 0 && <div style={{ height: 4 }} onDragOver={e => handleDragOver(e, "flat", cat, items.length)} onDrop={e => handleDrop(e, "flat", cat, items.length)} />}
+                    {items.length > 0 && <div style={{ height: 16 }} onDragOver={e => handleDragOver(e, "flat", cat, items.length)} onDrop={e => handleDrop(e, "flat", cat, items.length)} />}
                   </div>
                 )}
               </div>
