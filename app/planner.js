@@ -320,6 +320,33 @@ function parseIcsFile(text) {
 
 const DEFAULT_LIBRARY_CATEGORIES = ["Reference", "Contacts", "Ideas"];
 
+// Returns a Set of category names that should be hidden because a parent
+// above them has its nested categories hidden.
+function getHiddenSet(categories, indents, hiddenNested) {
+  const hidden = new Set();
+  if (!hiddenNested) return hidden;
+  categories.forEach((cat, i) => {
+    if (hiddenNested[cat]) {
+      getChildCategories(categories, indents, i).forEach(child => hidden.add(child));
+    }
+  });
+  return hidden;
+}
+
+function NestedToggle({ hidden, count, onClick }) {
+  return (
+    <button onClick={e => { e.stopPropagation(); onClick(); }} style={{
+      fontSize: 10, padding: "1px 7px", marginLeft: 6,
+      background: "transparent", color: "#999996", borderColor: "#d4d3d0",
+      borderRadius: 10, cursor: "pointer", whiteSpace: "nowrap",
+    }}
+      onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
+      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
+      title={hidden ? "Show nested categories" : "Hide nested categories"}
+    >{hidden ? `▸ ${count} nested` : "Hide nested"}</button>
+  );
+}
+
 const defaultData = () => ({
   schedule: DAYS.reduce((acc, day) => ({ ...acc, [day]: [] }), {}),
   todos: {
@@ -344,6 +371,9 @@ const defaultData = () => ({
   categoryIndents: {},    // { "Assignments": 1 } — indent level per flat category
   noteIndents: {},
   libraryIndents: {},
+  hiddenNested: {},       // { "School": true } — hide child categories entirely
+  noteHiddenNested: {},
+  libraryHiddenNested: {},
 });
 
 async function loadData() {
@@ -370,6 +400,9 @@ async function loadData() {
         categoryIndents: data.categoryIndents || {},
         noteIndents: data.noteIndents || {},
         libraryIndents: data.libraryIndents || {},
+        hiddenNested: data.hiddenNested || {},
+        noteHiddenNested: data.noteHiddenNested || {},
+        libraryHiddenNested: data.libraryHiddenNested || {},
       };
     }
     return null;
@@ -688,6 +721,30 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
 
 // ─── FORM COMPONENTS ─────────────────────────────────────────────
 
+// Convert a week's Monday string + day name into the actual YYYY-MM-DD date.
+function dayToDateStr(mondayStr, dayName) {
+  if (!mondayStr) return "";
+  const idx = DAYS.indexOf(dayName);
+  if (idx === -1) return mondayStr;
+  const [y, m, d] = mondayStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d + idx);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+// Convert an actual YYYY-MM-DD date into { mondayStr, dayName }.
+function dateStrToDayInfo(dateStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const dow = date.getDay();
+  const dayName = DAYS[dow === 0 ? 6 : dow - 1];
+  const diff = dow === 0 ? -6 : 1 - dow;
+  const monday = new Date(date);
+  monday.setDate(date.getDate() + diff);
+  const mondayStr = `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
+  return { mondayStr, dayName };
+}
+
 function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride, onRevertOverride, onCancel, onDelete, onSkip, isSkipped, isRecurring, hasOverride }) {
   const [editScope, setEditScope] = useState(hasOverride ? "week" : "week");
   const [time, setTime] = useState(item?.time || "");
@@ -700,6 +757,12 @@ function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride,
   const [excludeFromTasks, setExcludeFromTasks] = useState(item?.excludeFromTasks || false);
   const [generateTask, setGenerateTask] = useState(item?.generateTask || false);
   const [endDate, setEndDate] = useState(item?.endDate || "");
+  // Full date for one-time events — lets the user move it to any day/week
+  const [eventDateStr, setEventDateStr] = useState(
+    item && item.recurrence === "none"
+      ? dayToDateStr(item.eventDate || viewingMonday, dayKey || "Mon")
+      : ""
+  );
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
   const showsAsSession = text.toLowerCase().includes("session") && category === "Client";
@@ -741,6 +804,17 @@ function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride,
               borderColor: day === d ? "#85B7EB" : undefined,
             }}>{d}</button>
           ))}
+        </div>
+      )}
+      {item && !isRecurring && recurrence === "none" && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, color: "#666663" }}>Date:</span>
+          <input type="date" value={eventDateStr} onChange={e => setEventDateStr(e.target.value)}
+            style={{ fontSize: 13, padding: "4px 8px" }} />
+          {eventDateStr && (() => {
+            const info = dateStrToDayInfo(eventDateStr);
+            return info ? <span style={{ fontSize: 11, color: "#999996" }}>{info.dayName}</span> : null;
+          })()}
         </div>
       )}
       <div style={{ display: "flex", gap: 8 }}>
@@ -847,7 +921,10 @@ function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride,
           if (isWeekScope) {
             onSaveOverride({ time, endTime, text, notes, day });
           } else {
-            onSave({ time, endTime, text, notes, recurrence, category, excludeFromTasks, generateTask, endDate: endDate || undefined });
+            const payload = { time, endTime, text, notes, recurrence, category, excludeFromTasks, generateTask, endDate: endDate || undefined };
+            // For one-time events, a changed date may move it to a different day/week
+            if (recurrence === "none" && eventDateStr) payload.newDate = eventDateStr;
+            onSave(payload);
           }
         }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
       </div>
@@ -1139,6 +1216,19 @@ export default function Planner() {
     persist({ ...data, noteCollapsed: newCollapsed });
   };
 
+  const toggleHiddenNested = (key) => {
+    const cur = data.hiddenNested || {};
+    persist({ ...data, hiddenNested: { ...cur, [key]: !cur[key] } });
+  };
+  const toggleNoteHiddenNested = (key) => {
+    const cur = data.noteHiddenNested || {};
+    persist({ ...data, noteHiddenNested: { ...cur, [key]: !cur[key] } });
+  };
+  const toggleLibraryHiddenNested = (key) => {
+    const cur = data.libraryHiddenNested || {};
+    persist({ ...data, libraryHiddenNested: { ...cur, [key]: !cur[key] } });
+  };
+
   // ─── SCHEDULE CRUD ───
   const addScheduleItem = (dayKey, item) => {
     const newItem = { id: uid(), ...item, bold: false, category: item.category || "Personal" };
@@ -1149,16 +1239,37 @@ export default function Planner() {
   };
 
   const editScheduleItem = (dayKey, itemId, updates) => {
-    const items = sortByTime(data.schedule[dayKey].map(it => {
-      if (it.id !== itemId) return it;
-      const updated = { ...it, ...updates };
-      if (updates.recurrence === "none" && !updated.eventDate) updated.eventDate = viewingMonday;
-      if (updates.recurrence === "biweekly" && !updated.anchorDate) updated.anchorDate = viewingMonday;
-      if (updates.recurrence === "weekly") { delete updated.eventDate; delete updated.anchorDate; }
-      if (!updates.endDate) delete updated.endDate;
-      return updated;
-    }));
-    persist({ ...data, schedule: { ...data.schedule, [dayKey]: items } });
+    const { newDate, ...fields } = updates;
+    // Determine whether this edit moves the event to a different day
+    let targetDay = dayKey;
+    let targetMonday = null;
+    if (newDate) {
+      const info = dateStrToDayInfo(newDate);
+      if (info) { targetDay = info.dayName; targetMonday = info.mondayStr; }
+    }
+
+    const newSchedule = { ...data.schedule };
+    const original = (newSchedule[dayKey] || []).find(it => it.id === itemId);
+    if (!original) { setModal(null); return; }
+
+    const updated = { ...original, ...fields };
+    if (fields.recurrence === "none") {
+      updated.eventDate = targetMonday || updated.eventDate || viewingMonday;
+      delete updated.anchorDate;
+    }
+    if (fields.recurrence === "biweekly" && !updated.anchorDate) updated.anchorDate = viewingMonday;
+    if (fields.recurrence === "weekly") { delete updated.eventDate; delete updated.anchorDate; }
+    if (!fields.endDate) delete updated.endDate;
+
+    if (targetDay !== dayKey) {
+      // Move between day arrays
+      newSchedule[dayKey] = (newSchedule[dayKey] || []).filter(it => it.id !== itemId);
+      newSchedule[targetDay] = sortByTime([...(newSchedule[targetDay] || []), updated]);
+    } else {
+      newSchedule[dayKey] = sortByTime((newSchedule[dayKey] || []).map(it => it.id === itemId ? updated : it));
+    }
+
+    persist({ ...data, schedule: newSchedule });
     setModal(null);
   };
 
@@ -1968,11 +2079,16 @@ export default function Planner() {
           </div>
 
           {/* Flat categories */}
-          {flatCategories.map(cat => {
-            const items = data.todos.flat[cat] || [];
-            const cc = getCatColor(cat, flatCategories);
-            const indent = (data.categoryIndents || {})[cat] || 0;
-            return (
+          {(() => {
+            const hiddenCats = getHiddenSet(flatCategories, data.categoryIndents, data.hiddenNested);
+            return flatCategories.map((cat, catIdx) => {
+              if (hiddenCats.has(cat)) return null;
+              const items = data.todos.flat[cat] || [];
+              const cc = getCatColor(cat, flatCategories);
+              const indent = (data.categoryIndents || {})[cat] || 0;
+              const children = getChildCategories(flatCategories, data.categoryIndents, catIdx);
+              const nestedHidden = (data.hiddenNested || {})[cat];
+              return (
               <div key={cat} style={{ marginBottom: 12, marginLeft: indent * 24 }}>
                 <div onClick={() => toggleCollapse(cat)}
                   onDragOver={e => { if (data.collapsed[cat]) handleDragOver(e, "flat", cat, items.length); }}
@@ -1987,6 +2103,9 @@ export default function Planner() {
                   <span style={{ fontSize: indent > 0 ? 13 : 14, fontWeight: 500, color: indent > 0 ? "#666663" : "#1a1a1a" }}>{cat}</span>
                   <button onClick={e => { e.stopPropagation(); setModal({ type: "addTodo", section: "flat", subKey: cat }); }} style={{ fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6, background: "transparent", color: "#999996", cursor: "pointer" }}>+</button>
                   <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{items.length}</span>
+                  {children.length > 0 && (
+                    <NestedToggle hidden={nestedHidden} count={children.length} onClick={() => toggleHiddenNested(cat)} />
+                  )}
                 </div>
                 {!data.collapsed[cat] && (
                   <div style={{
@@ -2025,7 +2144,8 @@ export default function Planner() {
                 )}
               </div>
             );
-          })}
+            });
+          })()}
 
           {/* Completed this week */}
           {data.showCompleted && (() => {
@@ -2085,12 +2205,17 @@ export default function Planner() {
             </div>
           </div>
 
-          {noteCategories.map(cat => {
+          {(() => {
+            const hiddenCats = getHiddenSet(noteCategories, data.noteIndents, data.noteHiddenNested);
+            return noteCategories.map((cat, catIdx) => {
+            if (hiddenCats.has(cat)) return null;
             const weekNotes = getWeekNotes();
             const entries = weekNotes[cat] || [];
             const cc = getNoteCatColor(cat, noteCategories);
             const isCollapsed = (data.noteCollapsed || {})[cat];
             const indent = (data.noteIndents || {})[cat] || 0;
+            const children = getChildCategories(noteCategories, data.noteIndents, catIdx);
+            const nestedHidden = (data.noteHiddenNested || {})[cat];
             return (
               <div key={cat} style={{ marginBottom: indent > 0 ? 12 : 16, marginLeft: indent * 24 }}>
                 <div onClick={() => toggleNoteCollapse(cat)} style={{
@@ -2104,6 +2229,9 @@ export default function Planner() {
                     background: "transparent", color: "#999996", cursor: "pointer",
                   }}>+</button>
                   <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{entries.length}</span>
+                  {children.length > 0 && (
+                    <NestedToggle hidden={nestedHidden} count={children.length} onClick={() => toggleNoteHiddenNested(cat)} />
+                  )}
                 </div>
                 {!isCollapsed && (
                   <div style={{ paddingTop: 8 }}>
@@ -2139,7 +2267,8 @@ export default function Planner() {
                 )}
               </div>
             );
-          })}
+            });
+          })()}
 
           {noteCategories.length === 0 && (
             <div style={{ fontSize: 13, color: "#999996", fontStyle: "italic", padding: "20px 0", textAlign: "center" }}>
@@ -2162,11 +2291,16 @@ export default function Planner() {
             <span style={{ fontSize: 12, color: "#999996" }}>Permanent notes — not tied to any week</span>
           </div>
 
-          {libraryCategories.map(cat => {
+          {(() => {
+            const hiddenCats = getHiddenSet(libraryCategories, data.libraryIndents, data.libraryHiddenNested);
+            return libraryCategories.map((cat, catIdx) => {
+            if (hiddenCats.has(cat)) return null;
             const entries = (data.library || {})[cat] || [];
             const cc = getNoteCatColor(cat, libraryCategories);
             const isCollapsed = (data.libraryCollapsed || {})[cat];
             const indent = (data.libraryIndents || {})[cat] || 0;
+            const children = getChildCategories(libraryCategories, data.libraryIndents, catIdx);
+            const nestedHidden = (data.libraryHiddenNested || {})[cat];
             return (
               <div key={cat} style={{ marginBottom: indent > 0 ? 12 : 16, marginLeft: indent * 24 }}>
                 <div onClick={() => toggleLibraryCollapse(cat)} style={{
@@ -2180,6 +2314,9 @@ export default function Planner() {
                     background: "transparent", color: "#999996", cursor: "pointer",
                   }}>+</button>
                   <span style={{ fontSize: 11, color: "#999996", marginLeft: 4 }}>{entries.length}</span>
+                  {children.length > 0 && (
+                    <NestedToggle hidden={nestedHidden} count={children.length} onClick={() => toggleLibraryHiddenNested(cat)} />
+                  )}
                 </div>
                 {!isCollapsed && (
                   <div style={{ paddingTop: 8 }}>
@@ -2213,7 +2350,8 @@ export default function Planner() {
                 )}
               </div>
             );
-          })}
+            });
+          })()}
 
           {libraryCategories.length === 0 && (
             <div style={{ fontSize: 13, color: "#999996", fontStyle: "italic", padding: "20px 0", textAlign: "center" }}>
