@@ -144,6 +144,20 @@ function sortByTime(items) {
   return [...items].sort((a, b) => parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time));
 }
 
+// Given an ordered category list and their indent levels, return the names of
+// all categories nested under the one at `index` (any deeper indent, until a
+// category at the same or shallower level appears).
+function getChildCategories(categories, indents, index) {
+  const parentIndent = (indents || {})[categories[index]] || 0;
+  const children = [];
+  for (let i = index + 1; i < categories.length; i++) {
+    const lvl = (indents || {})[categories[i]] || 0;
+    if (lvl <= parentIndent) break;
+    children.push(categories[i]);
+  }
+  return children;
+}
+
 function parseIcsFile(text) {
   const events = [];
   const blocks = text.split("BEGIN:VEVENT");
@@ -328,6 +342,8 @@ const defaultData = () => ({
   libraryCategories: DEFAULT_LIBRARY_CATEGORIES,
   libraryCollapsed: {},
   categoryIndents: {},    // { "Assignments": 1 } — indent level per flat category
+  noteIndents: {},
+  libraryIndents: {},
 });
 
 async function loadData() {
@@ -352,6 +368,8 @@ async function loadData() {
         libraryCategories: data.libraryCategories || DEFAULT_LIBRARY_CATEGORIES,
         libraryCollapsed: data.libraryCollapsed || {},
         categoryIndents: data.categoryIndents || {},
+        noteIndents: data.noteIndents || {},
+        libraryIndents: data.libraryIndents || {},
       };
     }
     return null;
@@ -498,7 +516,6 @@ function ManageCategoriesModal({ title, description, categories, palette, onSave
   const [dragIdx, setDragIdx] = useState(null);
   const [dragOverIdx, setDragOverIdx] = useState(null);
   const newRef = useRef(null);
-  const showIndent = !!indents || indents === undefined ? false : false; // show if indents prop passed
   const hasIndents = indents !== undefined;
 
   const addCat = () => {
@@ -1093,12 +1110,33 @@ export default function Planner() {
 
   const setActiveTab = (tab) => persist({ ...data, activeTab: tab });
 
+  // Collapsing a parent category also collapses everything nested under it.
+  // Expanding a parent leaves children as they were.
   const toggleCollapse = (key) => {
-    persist({ ...data, collapsed: { ...data.collapsed, [key]: !data.collapsed[key] } });
+    const nowCollapsed = !data.collapsed[key];
+    const newCollapsed = { ...data.collapsed, [key]: nowCollapsed };
+    if (nowCollapsed) {
+      const cats = data.flatCategories || Object.keys(data.todos.flat);
+      const idx = cats.indexOf(key);
+      if (idx !== -1) {
+        getChildCategories(cats, data.categoryIndents, idx).forEach(child => { newCollapsed[child] = true; });
+      }
+    }
+    persist({ ...data, collapsed: newCollapsed });
   };
 
   const toggleNoteCollapse = (key) => {
-    persist({ ...data, noteCollapsed: { ...(data.noteCollapsed || {}), [key]: !(data.noteCollapsed || {})[key] } });
+    const cur = data.noteCollapsed || {};
+    const nowCollapsed = !cur[key];
+    const newCollapsed = { ...cur, [key]: nowCollapsed };
+    if (nowCollapsed) {
+      const cats = data.noteCategories || DEFAULT_NOTE_CATEGORIES;
+      const idx = cats.indexOf(key);
+      if (idx !== -1) {
+        getChildCategories(cats, data.noteIndents, idx).forEach(child => { newCollapsed[child] = true; });
+      }
+    }
+    persist({ ...data, noteCollapsed: newCollapsed });
   };
 
   // ─── SCHEDULE CRUD ───
@@ -1302,7 +1340,7 @@ export default function Planner() {
   };
 
   // ─── NOTE CATEGORY MANAGEMENT ───
-  const handleManageNoteCategories = ({ finalOrder, renames, deletions, additions }) => {
+  const handleManageNoteCategories = ({ finalOrder, renames, deletions, additions, indents: newIndents }) => {
     const notes = JSON.parse(JSON.stringify(data.notes || {}));
     const newNoteCollapsed = { ...(data.noteCollapsed || {}) };
     // Apply renames and deletions across ALL weeks
@@ -1316,7 +1354,7 @@ export default function Planner() {
       if (newNoteCollapsed[oldName] !== undefined) { newNoteCollapsed[newName] = newNoteCollapsed[oldName]; delete newNoteCollapsed[oldName]; }
     });
     deletions.forEach(cat => { delete newNoteCollapsed[cat]; });
-    persist({ ...data, notes, noteCategories: finalOrder, noteCollapsed: newNoteCollapsed });
+    persist({ ...data, notes, noteCategories: finalOrder, noteCollapsed: newNoteCollapsed, noteIndents: newIndents || {} });
     setModal(null);
   };
 
@@ -1353,11 +1391,20 @@ export default function Planner() {
   };
 
   const toggleLibraryCollapse = (key) => {
-    persist({ ...data, libraryCollapsed: { ...(data.libraryCollapsed || {}), [key]: !(data.libraryCollapsed || {})[key] } });
+    const cur = data.libraryCollapsed || {};
+    const nowCollapsed = !cur[key];
+    const newCollapsed = { ...cur, [key]: nowCollapsed };
+    if (nowCollapsed) {
+      const idx = libraryCategories.indexOf(key);
+      if (idx !== -1) {
+        getChildCategories(libraryCategories, data.libraryIndents, idx).forEach(child => { newCollapsed[child] = true; });
+      }
+    }
+    persist({ ...data, libraryCollapsed: newCollapsed });
   };
 
   // ─── LIBRARY CATEGORY MANAGEMENT ───
-  const handleManageLibraryCategories = ({ finalOrder, renames, deletions, additions }) => {
+  const handleManageLibraryCategories = ({ finalOrder, renames, deletions, additions, indents: newIndents }) => {
     const library = JSON.parse(JSON.stringify(data.library || {}));
     const newCollapsed = { ...(data.libraryCollapsed || {}) };
     Object.entries(renames).forEach(([oldName, newName]) => {
@@ -1366,7 +1413,7 @@ export default function Planner() {
     });
     deletions.forEach(cat => { delete library[cat]; delete newCollapsed[cat]; });
     additions.forEach(cat => { if (!library[cat]) library[cat] = []; });
-    persist({ ...data, library, libraryCategories: finalOrder, libraryCollapsed: newCollapsed });
+    persist({ ...data, library, libraryCategories: finalOrder, libraryCollapsed: newCollapsed, libraryIndents: newIndents || {} });
     setModal(null);
   };
 
@@ -2043,14 +2090,15 @@ export default function Planner() {
             const entries = weekNotes[cat] || [];
             const cc = getNoteCatColor(cat, noteCategories);
             const isCollapsed = (data.noteCollapsed || {})[cat];
+            const indent = (data.noteIndents || {})[cat] || 0;
             return (
-              <div key={cat} style={{ marginBottom: 16 }}>
+              <div key={cat} style={{ marginBottom: indent > 0 ? 12 : 16, marginLeft: indent * 24 }}>
                 <div onClick={() => toggleNoteCollapse(cat)} style={{
                   display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none",
                   padding: "6px 0", borderBottom: "0.5px solid #d4d3d0",
                 }}>
                   <CollapseArrow collapsed={isCollapsed} />
-                  <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>{cat}</span>
+                  <span style={{ fontSize: indent > 0 ? 13 : 14, fontWeight: 500, color: indent > 0 ? "#666663" : "#1a1a1a" }}>{cat}</span>
                   <button onClick={e => { e.stopPropagation(); setModal({ type: "addNote", category: cat }); }} style={{
                     fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6,
                     background: "transparent", color: "#999996", cursor: "pointer",
@@ -2118,14 +2166,15 @@ export default function Planner() {
             const entries = (data.library || {})[cat] || [];
             const cc = getNoteCatColor(cat, libraryCategories);
             const isCollapsed = (data.libraryCollapsed || {})[cat];
+            const indent = (data.libraryIndents || {})[cat] || 0;
             return (
-              <div key={cat} style={{ marginBottom: 16 }}>
+              <div key={cat} style={{ marginBottom: indent > 0 ? 12 : 16, marginLeft: indent * 24 }}>
                 <div onClick={() => toggleLibraryCollapse(cat)} style={{
                   display: "flex", alignItems: "center", cursor: "pointer", userSelect: "none",
                   padding: "6px 0", borderBottom: "0.5px solid #d4d3d0",
                 }}>
                   <CollapseArrow collapsed={isCollapsed} />
-                  <span style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>{cat}</span>
+                  <span style={{ fontSize: indent > 0 ? 13 : 14, fontWeight: 500, color: indent > 0 ? "#666663" : "#1a1a1a" }}>{cat}</span>
                   <button onClick={e => { e.stopPropagation(); setModal({ type: "addLibrary", category: cat }); }} style={{
                     fontSize: 14, lineHeight: 1, padding: "0 4px", border: "none", marginLeft: 6,
                     background: "transparent", color: "#999996", cursor: "pointer",
@@ -2333,10 +2382,11 @@ export default function Planner() {
         <Modal onClose={() => setModal(null)}>
           <ManageCategoriesModal
             title="Manage note categories"
-            description="Drag to reorder, rename inline, or remove categories. Deleting a category deletes all its entries across all weeks."
+            description="Drag to reorder, rename inline, or remove categories. Use ← → arrows to nest subcategories."
             categories={noteCategories}
             palette={NOTE_CAT_PALETTE}
             reservedNames={[]}
+            indents={data.noteIndents || {}}
             onSave={handleManageNoteCategories}
             onClose={() => setModal(null)}
           />
@@ -2386,10 +2436,11 @@ export default function Planner() {
         <Modal onClose={() => setModal(null)}>
           <ManageCategoriesModal
             title="Manage library categories"
-            description="Drag to reorder, rename inline, or remove categories. Deleting a category deletes all its entries."
+            description="Drag to reorder, rename inline, or remove categories. Use ← → arrows to nest subcategories."
             categories={libraryCategories}
             palette={NOTE_CAT_PALETTE}
             reservedNames={[]}
+            indents={data.libraryIndents || {}}
             onSave={handleManageLibraryCategories}
             onClose={() => setModal(null)}
           />
