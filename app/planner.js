@@ -2229,7 +2229,7 @@ export default function Planner() {
 
       {/* ═══ TO-DO TAB ═══ */}
       {activeTab === "todo" && (
-        <div style={{ maxWidth: 1400 }}>
+        <div style={{ maxWidth: 1080 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
             <button onClick={() => setModal({ type: "manageCategories" })} style={{
               fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
