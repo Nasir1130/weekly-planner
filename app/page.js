@@ -49,7 +49,7 @@ export default function Home() {
   }
 
   return (
-    <main style={{ width: '100%', margin: '0 auto', padding: '1rem 1.5rem 3rem' }}>
+    <main style={{ maxWidth: 1375, margin: '0 auto', padding: '1rem 1.5rem 3rem' }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
         <button onClick={signOut} style={{
           fontSize: 11, padding: '3px 10px', color: '#999', border: '1px solid #d4d3d0',
