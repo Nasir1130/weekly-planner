@@ -2050,11 +2050,12 @@ export default function Planner() {
   return (
     <div style={{
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-      // Wide enough for the 7-day grid to breathe on a large display, while
-      // still centring on very wide monitors rather than sprawling edge to edge.
-      maxWidth: 1500,
+      // No overall cap — the calendar grid fills the window. Individual tab
+      // sections below apply their own caps where line length matters.
+      width: "100%",
       margin: "0 auto",
-      padding: isMobile ? "0.25rem 0.5rem 2rem" : "0.5rem 1rem 2rem",
+      padding: isMobile ? "0.25rem 0.5rem 2rem" : "0.5rem 1.5rem 2rem",
+      boxSizing: "border-box",
     }}>
 
       {/* ═══ WEEKLY SCHEDULE ═══ */}
@@ -2229,7 +2230,7 @@ export default function Planner() {
 
       {/* ═══ TO-DO TAB ═══ */}
       {activeTab === "todo" && (
-        <div>
+        <div style={{ maxWidth: 1400 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
             <button onClick={() => setModal({ type: "manageCategories" })} style={{
               fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
