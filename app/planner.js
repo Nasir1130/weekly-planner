@@ -1891,6 +1891,11 @@ export default function Planner() {
               <div style={{ borderTop: "1.5px solid #d4d3d0", margin: compact ? "5px 0 4px" : "8px 0 5px" }} />
               {plannedItems.map((item, idx) => {
                 const todoColor = item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#999996" : "#999996";
+                // Category tint: flat categories use their own palette color,
+                // priority levels use their priority color.
+                const srcColor = item._section === "priority"
+                  ? (priorityColors[item._subKey]?.text || "#999996")
+                  : getCatColor(item._subKey, flatCategories).text;
                 return (
                   <div key={item.id}>
                     {isDraggingThisDay && planDropIdx === idx && planIndicator}
@@ -1911,6 +1916,10 @@ export default function Planner() {
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     >
                       <span style={{ color: "#d4d3d0", marginRight: compact ? 4 : 6 }}>•</span>{item.text}
+                      <span style={{
+                        fontSize: compact ? 9 : 11, color: srcColor, opacity: 0.75,
+                        marginLeft: 4, fontStyle: "normal", whiteSpace: "nowrap",
+                      }}>({item._subKey})</span>
                     </div>
                     {idx === plannedItems.length - 1 && isDraggingThisDay && planDropIdx === idx + 1 && planIndicator}
                   </div>
