@@ -1624,17 +1624,39 @@ export default function Planner() {
     setModal(null);
   };
 
+  // Complete a to-do straight from the calendar day, without opening the modal.
+  const completePlannedItem = (item) => {
+    const safeTodos = JSON.parse(JSON.stringify(data.todos));
+    const list = item._section === "priority" ? safeTodos.priority : safeTodos.flat;
+    const existing = (list[item._subKey] || []).find(it => it.id === item.id);
+    if (!existing) return;
+    list[item._subKey] = list[item._subKey].filter(it => it.id !== item.id);
+    const completedItem = {
+      ...existing,
+      checked: true,
+      completedAt: Date.now(),
+      completedWeek: viewingMonday,
+      fromSection: item._section,
+      fromKey: item._subKey,
+    };
+    delete completedItem.plannedDay;
+    delete completedItem.plannedWeek;
+    delete completedItem.plannedOrder;
+    persist({ ...data, todos: safeTodos, completed: [...data.completed, completedItem] });
+  };
+
   // ─── DRAG & DROP (planned to-dos in calendar day) ───
   // Planned items for a day come from several different category arrays, so
   // ordering is stored per-item as `plannedOrder` and rewritten across all
   // affected categories on drop.
-  const getPlannedForDay = (day) => {
+  const getPlannedForDay = (day, wkMonday) => {
+    const monday = wkMonday || viewingMonday;
     const out = [];
     [...PRIORITIES, ...flatCategories].forEach(key => {
       const isPriority = PRIORITIES.includes(key);
       const list = isPriority ? (data.todos.priority[key] || []) : (data.todos.flat[key] || []);
       list.forEach(item => {
-        if (item.plannedDay === day && item.plannedWeek === viewingMonday) {
+        if (item.plannedDay === day && item.plannedWeek === monday) {
           out.push({ ...item, _section: isPriority ? "priority" : "flat", _subKey: key });
         }
       });
@@ -1783,28 +1805,33 @@ export default function Planner() {
   // ─── RENDER ────────────────────────────────────────────────────
 
   // Helper to render a single day's events (shared between mobile and desktop)
+  // `opts.weekMonday` / `opts.weekOffset` let this render a day belonging to a
+  // different week than the one being viewed — needed for the spotlight view's
+  // flanking days when the focused day sits at a week boundary.
   const renderDayEvents = (day, date, opts = {}) => {
     const { compact } = opts;
+    const wkMonday = opts.weekMonday || viewingMonday;
+    const wkOffset = opts.weekOffset !== undefined ? opts.weekOffset : weekOffset;
     const today = isToday(date);
 
-    // Helper: check if event has ended before the viewing week
+    // Helper: check if event has ended before this week
     const isEventEnded = (item) => {
       if (!item.endDate) return false;
-      return viewingMonday > item.endDate;
+      return wkMonday > item.endDate;
     };
 
     // 1. Get this day's own events, filtered for visibility
     const ownItems = (data.schedule[day] || []).filter(item => {
       if (isEventEnded(item)) return false;
       if (item.recurrence === "weekly") return true;
-      if (item.recurrence === "biweekly") return isBiweeklyVisible(item.anchorDate, weekOffset);
-      if (item.recurrence === "none") { if (!item.eventDate) return weekOffset === 0; return item.eventDate === viewingMonday; }
+      if (item.recurrence === "biweekly") return isBiweeklyVisible(item.anchorDate, wkOffset);
+      if (item.recurrence === "none") { if (!item.eventDate) return wkOffset === 0; return item.eventDate === wkMonday; }
       return true;
     });
 
     // 2. Exclude events that have a day override moving them AWAY from this day
     const stayingItems = ownItems.filter(item => {
-      const ovr = item.weekOverrides?.[viewingMonday];
+      const ovr = item.weekOverrides?.[wkMonday];
       if (ovr && ovr.day && ovr.day !== day) return false;
       return true;
     });
@@ -1816,8 +1843,8 @@ export default function Planner() {
       (data.schedule[otherDay] || []).forEach(item => {
         if (isEventEnded(item)) return;
         if (item.recurrence === "none") return;
-        if (item.recurrence === "biweekly" && !isBiweeklyVisible(item.anchorDate, weekOffset)) return;
-        const ovr = item.weekOverrides?.[viewingMonday];
+        if (item.recurrence === "biweekly" && !isBiweeklyVisible(item.anchorDate, wkOffset)) return;
+        const ovr = item.weekOverrides?.[wkMonday];
         if (ovr && ovr.day === day) {
           movedInItems.push({ ...item, _sourceDay: otherDay });
         }
@@ -1826,8 +1853,11 @@ export default function Planner() {
 
     // 4. Combine and apply effective overrides, then sort
     const allItems = [...stayingItems, ...movedInItems];
-    const items = sortByTime(allItems.map(getEffectiveEvent));
-    const isItemSkipped = (item) => item.skipDates && item.skipDates.includes(viewingMonday);
+    const items = sortByTime(allItems.map(it => {
+      const override = it.weekOverrides?.[wkMonday];
+      return override ? { ...it, ...override } : it;
+    }));
+    const isItemSkipped = (item) => item.skipDates && item.skipDates.includes(wkMonday);
     const fontSize = compact ? 12 : 14;
     const timeFontSize = compact ? 12 : 14;
     return (
@@ -1849,12 +1879,16 @@ export default function Planner() {
         )}
         {items.map(item => {
           const skipped = isItemSkipped(item);
-          const hasOvr = item.weekOverrides?.[viewingMonday];
+          const hasOvr = item.weekOverrides?.[wkMonday];
           const catColor = EVENT_CAT_COLORS[item.category] || EVENT_CAT_COLORS.Personal;
           const sourceDay = item._sourceDay || day;
           const isAllDay = !item.time;
+          // Fixed-width time gutter keeps every event name starting at the same
+          // x-position, so the column reads as a clean vertical list.
+          const gutterWidth = compact ? 52 : 74;
           return (
             <div key={item.id} onClick={() => setModal({ type: "editSchedule", day: sourceDay, displayDay: day, item })} style={{
+              display: "flex", alignItems: "baseline", gap: compact ? 4 : 6,
               fontSize, lineHeight: 1.5, marginBottom: compact ? 4 : 6, cursor: "pointer",
               opacity: skipped ? 0.5 : 1, textDecoration: skipped ? "line-through" : "none",
               borderRadius: isAllDay ? 6 : 4,
@@ -1865,24 +1899,38 @@ export default function Planner() {
             }}
               onMouseEnter={e => { if (!isAllDay) e.currentTarget.style.background = "#f2f1ee"; else e.currentTarget.style.opacity = "0.85"; }}
               onMouseLeave={e => { if (!isAllDay) e.currentTarget.style.background = "transparent"; else e.currentTarget.style.opacity = skipped ? "0.5" : "1"; }}>
-              {item.time && <><span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: timeFontSize, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}</>}
-              {compact
-                ? <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
-                : <Linkify style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</Linkify>
-              }
-              <RecurrenceTag recurrence={item.recurrence} />
-              {hasOvr && !skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>✎</span>}
-              {item.notes && !compact && !skipped && (
-                <div style={{ fontSize: 12, color: "#999996", marginTop: 2 }}>
-                  <Linkify style={{ color: "#185FA5" }}>{item.notes}</Linkify>
-                </div>
+              {!isAllDay && (
+                <span style={{
+                  color: skipped ? "#999996" : "#1a1a1a", fontSize: timeFontSize, fontWeight: 700,
+                  flex: `0 0 ${gutterWidth}px`, width: gutterWidth,
+                  textAlign: "right", whiteSpace: "nowrap",
+                  overflow: "hidden", textOverflow: "ellipsis",
+                }} title={item.endTime ? `${item.time}–${item.endTime}` : item.time}>
+                  {item.time}
+                </span>
               )}
+              <span style={{ flex: 1, minWidth: 0 }}>
+                {compact
+                  ? <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
+                  : <Linkify style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</Linkify>
+                }
+                <RecurrenceTag recurrence={item.recurrence} />
+                {hasOvr && !skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>✎</span>}
+                {item.endTime && !compact && (
+                  <span style={{ fontSize: 11, color: "#999996", marginLeft: 5 }}>till {item.endTime}</span>
+                )}
+                {item.notes && !compact && !skipped && (
+                  <div style={{ fontSize: 12, color: "#999996", marginTop: 2 }}>
+                    <Linkify style={{ color: "#185FA5" }}>{item.notes}</Linkify>
+                  </div>
+                )}
+              </span>
             </div>
           );
         })}
         {/* Planned todos for this day */}
         {(() => {
-          const plannedItems = getPlannedForDay(day);
+          const plannedItems = getPlannedForDay(day, wkMonday);
           if (plannedItems.length === 0) return null;
           const isDraggingThisDay = planDrag && planDrag.day === day;
           const planIndicator = <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "1px 4px" }} />;
@@ -1905,8 +1953,8 @@ export default function Planner() {
                       onDragEnd={handlePlanDragEnd}
                       onDragOver={e => handlePlanDragOver(e, day, idx)}
                       onDrop={e => handlePlanDrop(e, day, idx)}
-                      onClick={() => setModal({ type: "editTodo", section: item._section, subKey: item._subKey, item: { ...item, _moveTarget: "" } })}
                       style={{
+                        display: "flex", alignItems: "flex-start", gap: compact ? 5 : 7,
                         fontSize: compact ? 11 : 13, lineHeight: 1.5, color: todoColor,
                         padding: compact ? "2px 4px" : "3px 8px", margin: "0 -4px",
                         cursor: "grab", borderRadius: 4,
@@ -1915,11 +1963,28 @@ export default function Planner() {
                       onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     >
-                      <span style={{ color: "#d4d3d0", marginRight: compact ? 4 : 6 }}>•</span>{item.text}
-                      <span style={{
-                        fontSize: compact ? 9 : 11, color: srcColor, opacity: 0.75,
-                        marginLeft: 4, fontStyle: "normal", whiteSpace: "nowrap",
-                      }}>({item._subKey})</span>
+                      <input
+                        type="checkbox"
+                        checked={false}
+                        onChange={() => completePlannedItem(item)}
+                        onClick={e => e.stopPropagation()}
+                        title="Mark completed"
+                        style={{
+                          cursor: "pointer", flexShrink: 0,
+                          marginTop: compact ? 2 : 3,
+                          width: compact ? 11 : 13, height: compact ? 11 : 13,
+                        }}
+                      />
+                      <span
+                        onClick={() => setModal({ type: "editTodo", section: item._section, subKey: item._subKey, item: { ...item, _moveTarget: "" } })}
+                        style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+                      >
+                        {item.text}
+                        <span style={{
+                          fontSize: compact ? 9 : 11, color: srcColor, opacity: 0.75,
+                          marginLeft: 4, fontStyle: "normal", whiteSpace: "nowrap",
+                        }}>({item._subKey})</span>
+                      </span>
                     </div>
                     {idx === plannedItems.length - 1 && isDraggingThisDay && planDropIdx === idx + 1 && planIndicator}
                   </div>
@@ -2047,56 +2112,57 @@ export default function Planner() {
           </div>
         )}
         {/* Desktop: spotlight day view */}
-        {!data.hideCalendar && !isMobile && (data.calendarView || "week") === "day" && (
+        {!data.hideCalendar && !isMobile && (data.calendarView || "week") === "day" && (() => {
+          // Neighbours may fall in an adjacent week — compute their real week
+          // context so a Monday shows the previous Sunday, not this week's.
+          const neighbour = (delta) => {
+            const rawIdx = desktopDayIndex + delta;
+            const wrapped = rawIdx < 0 || rawIdx > 6;
+            const dayIdx = (rawIdx + 7) % 7;
+            const offset = weekOffset + (rawIdx < 0 ? -1 : rawIdx > 6 ? 1 : 0);
+            return {
+              day: DAYS[dayIdx],
+              date: getWeekDates(offset)[dayIdx],
+              weekMonday: getMondayStr(offset),
+              weekOffset: offset,
+              wrapped,
+              dayIdx,
+            };
+          };
+          const prev = neighbour(-1);
+          const next = neighbour(1);
+          const goTo = (n) => { setWeekOffset(n.weekOffset); setDesktopDayIndex(n.dayIdx); };
+          return (
           <div>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 10 }}>
-              <button onClick={() => {
-                if (desktopDayIndex > 0) setDesktopDayIndex(desktopDayIndex - 1);
-                else { setWeekOffset(weekOffset - 1); setDesktopDayIndex(6); }
-              }} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
+              <button onClick={() => goTo(prev)} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
               <span style={{ fontSize: 16, fontWeight: 600, color: "#1a1a1a", minWidth: 100, textAlign: "center" }}>
                 {DAYS[desktopDayIndex]} {formatDate(weekDates[desktopDayIndex])}
               </span>
-              <button onClick={() => {
-                if (desktopDayIndex < 6) setDesktopDayIndex(desktopDayIndex + 1);
-                else { setWeekOffset(weekOffset + 1); setDesktopDayIndex(0); }
-              }} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
+              <button onClick={() => goTo(next)} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 3fr 1fr", gap: 8, alignItems: "start" }}>
               <div style={{ opacity: 0.5, cursor: "pointer", transition: "opacity 0.15s" }}
-                onClick={() => {
-                  if (desktopDayIndex > 0) setDesktopDayIndex(desktopDayIndex - 1);
-                  else { setWeekOffset(weekOffset - 1); setDesktopDayIndex(6); }
-                }}
+                onClick={() => goTo(prev)}
                 onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
                 onMouseLeave={e => e.currentTarget.style.opacity = "0.5"}
               >
-                {renderDayEvents(
-                  DAYS[desktopDayIndex > 0 ? desktopDayIndex - 1 : 6],
-                  weekDates[desktopDayIndex > 0 ? desktopDayIndex - 1 : 6],
-                  { compact: true }
-                )}
+                {renderDayEvents(prev.day, prev.date, { compact: true, weekMonday: prev.weekMonday, weekOffset: prev.weekOffset })}
               </div>
               <div>
                 {renderDayEvents(DAYS[desktopDayIndex], weekDates[desktopDayIndex], { compact: false })}
               </div>
               <div style={{ opacity: 0.5, cursor: "pointer", transition: "opacity 0.15s" }}
-                onClick={() => {
-                  if (desktopDayIndex < 6) setDesktopDayIndex(desktopDayIndex + 1);
-                  else { setWeekOffset(weekOffset + 1); setDesktopDayIndex(0); }
-                }}
+                onClick={() => goTo(next)}
                 onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
                 onMouseLeave={e => e.currentTarget.style.opacity = "0.5"}
               >
-                {renderDayEvents(
-                  DAYS[desktopDayIndex < 6 ? desktopDayIndex + 1 : 0],
-                  weekDates[desktopDayIndex < 6 ? desktopDayIndex + 1 : 0],
-                  { compact: true }
-                )}
+                {renderDayEvents(next.day, next.date, { compact: true, weekMonday: next.weekMonday, weekOffset: next.weekOffset })}
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
         {/* Mobile: single day view */}
         {!data.hideCalendar && isMobile && (
           renderDayEvents(DAYS[mobileDayIndex], weekDates[mobileDayIndex], { compact: false })
