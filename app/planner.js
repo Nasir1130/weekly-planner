@@ -1866,6 +1866,7 @@ export default function Planner() {
         padding: compact ? "8px 10px" : "12px 16px",
         border: today ? "0.5px solid #85B7EB" : "0.5px solid #d4d3d0",
         minHeight: compact ? 90 : 60,
+        overflow: "hidden",
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: compact ? 6 : 8 }}>
           <div>
@@ -1883,12 +1884,14 @@ export default function Planner() {
           const catColor = EVENT_CAT_COLORS[item.category] || EVENT_CAT_COLORS.Personal;
           const sourceDay = item._sourceDay || day;
           const isAllDay = !item.time;
-          // Fixed-width time gutter keeps every event name starting at the same
-          // x-position, so the column reads as a clean vertical list.
-          const gutterWidth = compact ? 52 : 74;
+          // The fixed time gutter only pays for itself when there's horizontal
+          // room — in the 7-column week view the time stays inline.
+          const useGutter = !compact && !isAllDay;
           return (
             <div key={item.id} onClick={() => setModal({ type: "editSchedule", day: sourceDay, displayDay: day, item })} style={{
-              display: "flex", alignItems: "baseline", gap: compact ? 4 : 6,
+              display: useGutter ? "flex" : "block",
+              alignItems: useGutter ? "baseline" : undefined,
+              gap: useGutter ? 6 : undefined,
               fontSize, lineHeight: 1.5, marginBottom: compact ? 4 : 6, cursor: "pointer",
               opacity: skipped ? 0.5 : 1, textDecoration: skipped ? "line-through" : "none",
               borderRadius: isAllDay ? 6 : 4,
@@ -1899,32 +1902,44 @@ export default function Planner() {
             }}
               onMouseEnter={e => { if (!isAllDay) e.currentTarget.style.background = "#f2f1ee"; else e.currentTarget.style.opacity = "0.85"; }}
               onMouseLeave={e => { if (!isAllDay) e.currentTarget.style.background = "transparent"; else e.currentTarget.style.opacity = skipped ? "0.5" : "1"; }}>
-              {!isAllDay && (
-                <span style={{
-                  color: skipped ? "#999996" : "#1a1a1a", fontSize: timeFontSize, fontWeight: 700,
-                  flex: `0 0 ${gutterWidth}px`, width: gutterWidth,
-                  textAlign: "right", whiteSpace: "nowrap",
-                  overflow: "hidden", textOverflow: "ellipsis",
-                }} title={item.endTime ? `${item.time}–${item.endTime}` : item.time}>
-                  {item.time}
-                </span>
+              {useGutter ? (
+                <>
+                  <span style={{
+                    color: skipped ? "#999996" : "#1a1a1a", fontSize: timeFontSize, fontWeight: 700,
+                    flex: "0 0 74px", width: 74,
+                    textAlign: "right", whiteSpace: "nowrap",
+                    overflow: "hidden", textOverflow: "ellipsis",
+                  }} title={item.endTime ? `${item.time}–${item.endTime}` : item.time}>
+                    {item.time}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <Linkify style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</Linkify>
+                    <RecurrenceTag recurrence={item.recurrence} />
+                    {hasOvr && !skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>✎</span>}
+                    {item.endTime && <span style={{ fontSize: 11, color: "#999996", marginLeft: 5 }}>till {item.endTime}</span>}
+                    {item.notes && !skipped && (
+                      <div style={{ fontSize: 12, color: "#999996", marginTop: 2 }}>
+                        <Linkify style={{ color: "#185FA5" }}>{item.notes}</Linkify>
+                      </div>
+                    )}
+                  </span>
+                </>
+              ) : (
+                <>
+                  {item.time && <><span style={{ color: skipped ? "#999996" : "#1a1a1a", fontSize: timeFontSize, fontWeight: 700 }}>{item.time}{item.endTime ? `–${item.endTime}` : ""}</span>{" "}</>}
+                  {compact
+                    ? <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
+                    : <Linkify style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</Linkify>
+                  }
+                  <RecurrenceTag recurrence={item.recurrence} />
+                  {hasOvr && !skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>✎</span>}
+                  {item.notes && !compact && !skipped && (
+                    <div style={{ fontSize: 12, color: "#999996", marginTop: 2 }}>
+                      <Linkify style={{ color: "#185FA5" }}>{item.notes}</Linkify>
+                    </div>
+                  )}
+                </>
               )}
-              <span style={{ flex: 1, minWidth: 0 }}>
-                {compact
-                  ? <span style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</span>
-                  : <Linkify style={{ fontWeight: item.bold ? 700 : 400, color: skipped ? "#999996" : catColor.text }}>{item.text}</Linkify>
-                }
-                <RecurrenceTag recurrence={item.recurrence} />
-                {hasOvr && !skipped && <span style={{ fontSize: 10, color: "#999996", marginLeft: 3 }}>✎</span>}
-                {item.endTime && !compact && (
-                  <span style={{ fontSize: 11, color: "#999996", marginLeft: 5 }}>till {item.endTime}</span>
-                )}
-                {item.notes && !compact && !skipped && (
-                  <div style={{ fontSize: 12, color: "#999996", marginTop: 2 }}>
-                    <Linkify style={{ color: "#185FA5" }}>{item.notes}</Linkify>
-                  </div>
-                )}
-              </span>
             </div>
           );
         })}
@@ -1936,7 +1951,16 @@ export default function Planner() {
           const planIndicator = <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "1px 4px" }} />;
           return (
             <>
-              <div style={{ borderTop: "1.5px solid #d4d3d0", margin: compact ? "5px 0 4px" : "8px 0 5px" }} />
+              <div style={{
+                // Subtle inset panel distinguishes the to-do zone from the
+                // timed-events zone above. Uses a translucent wash so it works
+                // over both the normal cell and today's blue cell.
+                background: "rgba(0,0,0,0.035)",
+                borderTop: "1px solid rgba(0,0,0,0.09)",
+                borderRadius: "0 0 6px 6px",
+                margin: compact ? "6px -10px -8px" : "10px -16px -12px",
+                padding: compact ? "5px 10px 7px" : "8px 16px 10px",
+              }}>
               {plannedItems.map((item, idx) => {
                 const todoColor = item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#999996" : "#999996";
                 // Category tint: flat categories use their own palette color,
@@ -1960,7 +1984,7 @@ export default function Planner() {
                         cursor: "grab", borderRadius: 4,
                         fontStyle: "italic",
                       }}
-                      onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.05)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     >
                       <input
@@ -1972,7 +1996,8 @@ export default function Planner() {
                         style={{
                           cursor: "pointer", flexShrink: 0,
                           marginTop: compact ? 2 : 3,
-                          width: compact ? 11 : 13, height: compact ? 11 : 13,
+                          width: compact ? 9 : 11, height: compact ? 9 : 11,
+                          accentColor: "#3B6D11",
                         }}
                       />
                       <span
@@ -1996,6 +2021,7 @@ export default function Planner() {
                   onDragOver={e => handlePlanDragOver(e, day, plannedItems.length)}
                   onDrop={e => handlePlanDrop(e, day, plannedItems.length)} />
               )}
+              </div>
             </>
           );
         })()}
