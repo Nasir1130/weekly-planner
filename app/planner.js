@@ -951,6 +951,7 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories, viewingMon
   // otherwise the week currently being viewed.
   const [plannedWeek, setPlannedWeek] = useState(item?.plannedWeek || viewingMonday);
   const [category, setCategory] = useState(item?._moveTarget || "");
+  const [completed, setCompleted] = useState(false);
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
 
@@ -970,13 +971,27 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories, viewingMon
   })();
   const plannedDateLabel = plannedDay ? dayToDateStr(plannedWeek, plannedDay).slice(5).replace("-", "/") : "";
 
-  const buildPayload = () => ({ text, bold, color, plannedDay, plannedWeek, moveTarget: category });
+  const buildPayload = () => ({ text, bold, color, plannedDay, plannedWeek, moveTarget: category, completed });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 16, fontWeight: 500 }}>{item ? "Edit item" : "New item"}</div>
       <input ref={inputRef} placeholder="What needs doing?" value={text} onChange={e => setText(e.target.value)}
         onKeyDown={e => { if (e.key === "Enter" && text.trim()) onSave(buildPayload()); }} />
+      {item && (
+        <label style={{
+          display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer",
+          padding: "8px 10px", borderRadius: 8,
+          background: completed ? "#EAF3DE" : "#f8f8f6",
+          border: completed ? "1px solid #C0DD97" : "1px solid #d4d3d0",
+          color: completed ? "#3B6D11" : "#666663",
+          transition: "background 0.1s, border-color 0.1s",
+        }}>
+          <input type="checkbox" checked={completed} onChange={e => setCompleted(e.target.checked)} style={{ cursor: "pointer" }} />
+          Mark completed
+          {completed && <span style={{ fontSize: 11, color: "#666663" }}>— moves to Done on save</span>}
+        </label>
+      )}
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666663", cursor: "pointer" }}>
           <input type="checkbox" checked={bold} onChange={e => setBold(e.target.checked)} /> Bold
@@ -1381,6 +1396,34 @@ export default function Planner() {
   const editTodoItem = (section, subKey, itemId, updates) => {
     const newTodos = { ...data.todos };
     const colorVal = updates.color && updates.color !== "none" ? updates.color : undefined;
+
+    // "Mark completed" short-circuits the rest: the item leaves the list and
+    // moves to the completed log, carrying any edits made in the same save.
+    if (updates.completed) {
+      const safeTodos = JSON.parse(JSON.stringify(data.todos));
+      const list = section === "priority" ? safeTodos.priority : safeTodos.flat;
+      const existing = (list[subKey] || []).find(it => it.id === itemId);
+      if (!existing) { setModal(null); return; }
+      list[subKey] = list[subKey].filter(it => it.id !== itemId);
+      const completedItem = {
+        ...existing,
+        text: updates.text ?? existing.text,
+        bold: updates.bold ?? existing.bold,
+        checked: true,
+        completedAt: Date.now(),
+        completedWeek: viewingMonday,
+        fromSection: section,
+        fromKey: subKey,
+      };
+      if (colorVal) completedItem.color = colorVal; else delete completedItem.color;
+      delete completedItem.plannedDay;
+      delete completedItem.plannedWeek;
+      delete completedItem.plannedOrder;
+      persist({ ...data, todos: safeTodos, completed: [...data.completed, completedItem] });
+      setModal(null);
+      return;
+    }
+
     const applyPlanned = (item) => {
       if (updates.plannedDay) {
         item.plannedDay = updates.plannedDay;
