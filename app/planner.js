@@ -946,15 +946,37 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories, viewingMon
   const [text, setText] = useState(item?.text || "");
   const [bold, setBold] = useState(item?.bold || false);
   const [color, setColor] = useState(item?.color || "none");
-  const [plannedDay, setPlannedDay] = useState(item?.plannedWeek === viewingMonday ? (item?.plannedDay || "") : "");
+  const [plannedDay, setPlannedDay] = useState(item?.plannedDay || "");
+  // The week the plan applies to — defaults to the item's existing planned week,
+  // otherwise the week currently being viewed.
+  const [plannedWeek, setPlannedWeek] = useState(item?.plannedWeek || viewingMonday);
   const [category, setCategory] = useState(item?._moveTarget || "");
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const shiftWeek = (delta) => {
+    const [y, m, d] = plannedWeek.split("-").map(Number);
+    const dt = new Date(y, m - 1, d + delta * 7);
+    setPlannedWeek(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`);
+  };
+  const weekLabel = (() => {
+    if (plannedWeek === viewingMonday) return "this week";
+    const [y1, m1, d1] = viewingMonday.split("-").map(Number);
+    const [y2, m2, d2] = plannedWeek.split("-").map(Number);
+    const diffWeeks = Math.round((new Date(y2, m2 - 1, d2) - new Date(y1, m1 - 1, d1)) / (1000 * 60 * 60 * 24 * 7));
+    if (diffWeeks === 1) return "next week";
+    if (diffWeeks === -1) return "last week";
+    return `${diffWeeks > 0 ? "+" : ""}${diffWeeks}w`;
+  })();
+  const plannedDateLabel = plannedDay ? dayToDateStr(plannedWeek, plannedDay).slice(5).replace("-", "/") : "";
+
+  const buildPayload = () => ({ text, bold, color, plannedDay, plannedWeek, moveTarget: category });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ fontSize: 16, fontWeight: 500 }}>{item ? "Edit item" : "New item"}</div>
       <input ref={inputRef} placeholder="What needs doing?" value={text} onChange={e => setText(e.target.value)}
-        onKeyDown={e => { if (e.key === "Enter" && text.trim()) onSave({ text, bold, color, plannedDay, moveTarget: category }); }} />
+        onKeyDown={e => { if (e.key === "Enter" && text.trim()) onSave(buildPayload()); }} />
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#666663", cursor: "pointer" }}>
           <input type="checkbox" checked={bold} onChange={e => setBold(e.target.checked)} /> Bold
@@ -979,7 +1001,7 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories, viewingMon
           </select>
         )}
       </div>
-      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, color: "#666663", marginRight: 2 }}>Plan for:</span>
         {DAYS.map(d => (
           <button key={d} onClick={() => setPlannedDay(plannedDay === d ? "" : d)} style={{
@@ -991,16 +1013,38 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories, viewingMon
           }}>{d}</button>
         ))}
         {plannedDay && (
-          <button onClick={() => setPlannedDay("")} style={{
+          <button onClick={() => setPlannedDay("")} title="Clear plan" style={{
             fontSize: 11, padding: "3px 6px", border: "none", background: "transparent",
             color: "#999996", cursor: "pointer",
           }}>✕</button>
         )}
       </div>
+      {plannedDay && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", paddingLeft: 2 }}>
+          <span style={{ fontSize: 12, color: "#666663" }}>Week:</span>
+          <button onClick={() => shiftWeek(-1)} title="Previous week" style={{
+            fontSize: 13, padding: "2px 8px", border: "1px solid #d4d3d0",
+            background: "transparent", color: "#666663", cursor: "pointer", borderRadius: 4, lineHeight: 1.3,
+          }}>&#8592;</button>
+          <span style={{ fontSize: 12, color: "#3B6D11", background: "#EAF3DE", padding: "3px 10px", borderRadius: 10, whiteSpace: "nowrap" }}>
+            {plannedDay} {plannedDateLabel} <span style={{ color: "#666663" }}>({weekLabel})</span>
+          </span>
+          <button onClick={() => shiftWeek(1)} title="Next week" style={{
+            fontSize: 13, padding: "2px 8px", border: "1px solid #d4d3d0",
+            background: "transparent", color: "#666663", cursor: "pointer", borderRadius: 4, lineHeight: 1.3,
+          }}>&#8594;</button>
+          {plannedWeek !== viewingMonday && (
+            <button onClick={() => setPlannedWeek(viewingMonday)} style={{
+              fontSize: 11, padding: "3px 8px", background: "transparent",
+              color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
+            }}>Reset</button>
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
         {item && onDelete && <button onClick={onDelete} style={{ color: "#A32D2D", borderColor: "#F09595", marginRight: "auto" }}>Delete</button>}
         <button onClick={onCancel}>Cancel</button>
-        <button onClick={() => { if (text.trim()) onSave({ text, bold, color, plannedDay, moveTarget: category }); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
+        <button onClick={() => { if (text.trim()) onSave(buildPayload()); }} style={{ background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>Save</button>
       </div>
     </div>
   );
@@ -1321,7 +1365,7 @@ export default function Planner() {
   const addTodoItem = (section, subKey, item) => {
     const newItem = { id: uid(), text: item.text, bold: item.bold, checked: false };
     if (item.color && item.color !== "none") newItem.color = item.color;
-    if (item.plannedDay) { newItem.plannedDay = item.plannedDay; newItem.plannedWeek = viewingMonday; }
+    if (item.plannedDay) { newItem.plannedDay = item.plannedDay; newItem.plannedWeek = item.plannedWeek || viewingMonday; }
     const newTodos = { ...data.todos };
     if (section === "priority") newTodos.priority = { ...newTodos.priority, [subKey]: [...newTodos.priority[subKey], newItem] };
     else newTodos.flat = { ...newTodos.flat, [subKey]: [...newTodos.flat[subKey], newItem] };
@@ -1333,7 +1377,7 @@ export default function Planner() {
     const newTodos = { ...data.todos };
     const colorVal = updates.color && updates.color !== "none" ? updates.color : undefined;
     const applyPlanned = (item) => {
-      if (updates.plannedDay) { item.plannedDay = updates.plannedDay; item.plannedWeek = viewingMonday; }
+      if (updates.plannedDay) { item.plannedDay = updates.plannedDay; item.plannedWeek = updates.plannedWeek || viewingMonday; }
       else { delete item.plannedDay; delete item.plannedWeek; }
       return item;
     };
@@ -1585,6 +1629,23 @@ export default function Planner() {
   const isDropHere = (section, subKey, index) => dropTarget && dropTarget.section === section && dropTarget.subKey === subKey && dropTarget.insertIndex === index;
   const isDropInSection = (section, subKey) => dropTarget && dropTarget.section === section && dropTarget.subKey === subKey;
   const dropIndicator = <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "1px 8px" }} />;
+
+  // Badge shown next to a to-do that's been planned onto a calendar day.
+  // Items planned for a different week are dimmed and show the date, so a
+  // stale plan from a past week is obvious rather than invisible.
+  const plannedBadge = (item) => {
+    if (!item.plannedDay) return null;
+    const sameWeek = item.plannedWeek === viewingMonday;
+    const dateLabel = item.plannedWeek ? dayToDateStr(item.plannedWeek, item.plannedDay).slice(5).replace("-", "/") : "";
+    return (
+      <span style={{
+        fontSize: 10,
+        color: sameWeek ? "#3B6D11" : "#999996",
+        background: sameWeek ? "#EAF3DE" : "#f2f1ee",
+        padding: "1px 5px", borderRadius: 4, marginLeft: 4, whiteSpace: "nowrap",
+      }}>→ {item.plannedDay}{sameWeek ? "" : ` ${dateLabel}`}</span>
+    );
+  };
 
   const priorityColors = {
     "Very High": { bg: "#FCEBEB", text: "#A32D2D", border: "#F09595" },
@@ -2062,7 +2123,7 @@ export default function Planner() {
                                 <span onClick={() => setModal({ type: "editTodo", section: "priority", subKey: priority, item: { ...item, _moveTarget: "" } })}
                                   style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
                                   onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
-                                {item.plannedDay && item.plannedWeek === viewingMonday && <span style={{ fontSize: 10, color: "#3B6D11", background: "#EAF3DE", padding: "1px 5px", borderRadius: 4, marginLeft: 4, whiteSpace: "nowrap" }}>→ {item.plannedDay}</span>}
+                                {plannedBadge(item)}
                                 <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
                               </div>
                               {idx === items.length - 1 && isDropHere("priority", priority, idx + 1) && dropIndicator}
@@ -2133,7 +2194,7 @@ export default function Planner() {
                           <span onClick={() => setModal({ type: "editTodo", section: "flat", subKey: cat, item: { ...item, _moveTarget: "" } })}
                             style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flex: 1 }}
                             onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"} onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>{item.text}</span>
-                          {item.plannedDay && item.plannedWeek === viewingMonday && <span style={{ fontSize: 10, color: "#3B6D11", background: "#EAF3DE", padding: "1px 5px", borderRadius: 4, marginLeft: 4, whiteSpace: "nowrap" }}>→ {item.plannedDay}</span>}
+                          {plannedBadge(item)}
                           <span style={{ fontSize: 10, color: "#999996", cursor: "grab", padding: "2px 2px", userSelect: "none" }}>&#8942;</span>
                         </div>
                         {idx === items.length - 1 && isDropHere("flat", cat, idx + 1) && dropIndicator}
