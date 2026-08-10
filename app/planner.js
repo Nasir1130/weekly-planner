@@ -1177,6 +1177,11 @@ export default function Planner() {
   const [dropTarget, setDropTarget] = useState(null);
   const dragItemRef = useRef(null);
   const dropTargetRef = useRef(null);
+  // Separate drag state for reordering planned to-dos inside a calendar day,
+  // kept distinct from the to-do list drag so the two can't interfere.
+  const [planDrag, setPlanDrag] = useState(null);
+  const [planDropIdx, setPlanDropIdx] = useState(null);
+  const planDragRef = useRef(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileDayIndex, setMobileDayIndex] = useState(() => {
@@ -1377,8 +1382,12 @@ export default function Planner() {
     const newTodos = { ...data.todos };
     const colorVal = updates.color && updates.color !== "none" ? updates.color : undefined;
     const applyPlanned = (item) => {
-      if (updates.plannedDay) { item.plannedDay = updates.plannedDay; item.plannedWeek = updates.plannedWeek || viewingMonday; }
-      else { delete item.plannedDay; delete item.plannedWeek; }
+      if (updates.plannedDay) {
+        item.plannedDay = updates.plannedDay;
+        item.plannedWeek = updates.plannedWeek || viewingMonday;
+      } else {
+        delete item.plannedDay; delete item.plannedWeek; delete item.plannedOrder;
+      }
       return item;
     };
     if (updates.moveTarget && updates.moveTarget !== subKey) {
@@ -1572,6 +1581,81 @@ export default function Planner() {
     setModal(null);
   };
 
+  // ─── DRAG & DROP (planned to-dos in calendar day) ───
+  // Planned items for a day come from several different category arrays, so
+  // ordering is stored per-item as `plannedOrder` and rewritten across all
+  // affected categories on drop.
+  const getPlannedForDay = (day) => {
+    const out = [];
+    [...PRIORITIES, ...flatCategories].forEach(key => {
+      const isPriority = PRIORITIES.includes(key);
+      const list = isPriority ? (data.todos.priority[key] || []) : (data.todos.flat[key] || []);
+      list.forEach(item => {
+        if (item.plannedDay === day && item.plannedWeek === viewingMonday) {
+          out.push({ ...item, _section: isPriority ? "priority" : "flat", _subKey: key });
+        }
+      });
+    });
+    // Items without an explicit order keep their natural position at the end,
+    // so existing plans don't jump around before they're ever dragged.
+    return out.sort((a, b) => {
+      const ao = a.plannedOrder ?? Number.MAX_SAFE_INTEGER;
+      const bo = b.plannedOrder ?? Number.MAX_SAFE_INTEGER;
+      return ao - bo;
+    });
+  };
+
+  const handlePlanDragStart = (e, day, itemId) => {
+    e.stopPropagation();
+    planDragRef.current = { day, itemId };
+    setPlanDrag({ day, itemId });
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", itemId);
+    e.currentTarget.style.opacity = "0.4";
+  };
+  const handlePlanDragEnd = (e) => {
+    e.currentTarget.style.opacity = "1";
+    planDragRef.current = null;
+    setPlanDrag(null);
+    setPlanDropIdx(null);
+  };
+  const handlePlanDragOver = (e, day, idx) => {
+    const drag = planDragRef.current;
+    if (!drag || drag.day !== day) return; // only reorder within the same day
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    if (planDropIdx !== idx) setPlanDropIdx(idx);
+  };
+  const handlePlanDrop = (e, day, insertIdx) => {
+    const drag = planDragRef.current;
+    if (!drag || drag.day !== day) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const ordered = getPlannedForDay(day);
+    const srcIdx = ordered.findIndex(it => it.id === drag.itemId);
+    if (srcIdx === -1) { setPlanDrag(null); setPlanDropIdx(null); return; }
+    const [moved] = ordered.splice(srcIdx, 1);
+    let idx = insertIdx;
+    if (srcIdx < idx) idx--;
+    if (idx < 0) idx = 0;
+    if (idx > ordered.length) idx = ordered.length;
+    ordered.splice(idx, 0, moved);
+
+    // Write the new sequence back across whichever categories the items live in
+    const newTodos = JSON.parse(JSON.stringify(data.todos));
+    ordered.forEach((it, order) => {
+      const list = it._section === "priority" ? newTodos.priority[it._subKey] : newTodos.flat[it._subKey];
+      if (!list) return;
+      const target = list.find(x => x.id === it.id);
+      if (target) target.plannedOrder = order;
+    });
+    persist({ ...data, todos: newTodos });
+    planDragRef.current = null;
+    setPlanDrag(null);
+    setPlanDropIdx(null);
+  };
+
   // ─── DRAG & DROP (todos) ───
   const allMoveTargets = [...PRIORITIES, ...flatCategories];
 
@@ -1630,8 +1714,7 @@ export default function Planner() {
   const isDropInSection = (section, subKey) => dropTarget && dropTarget.section === section && dropTarget.subKey === subKey;
   const dropIndicator = <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "1px 8px" }} />;
 
-  // Badge shown next to a to-do that's been planned onto a calendar day.
-  // Items planned for a different week are dimmed and show the date, so a
+  // Badge shown next to a to-do that's been planned onto a calendar day.  // Items planned for a different week are dimmed and show the date, so a
   // stale plan from a past week is obvious rather than invisible.
   const plannedBadge = (item) => {
     if (!item.plannedDay) return null;
@@ -1756,37 +1839,46 @@ export default function Planner() {
         })}
         {/* Planned todos for this day */}
         {(() => {
-          const plannedItems = [];
-          [...PRIORITIES, ...flatCategories].forEach(key => {
-            const isPriority = PRIORITIES.includes(key);
-            const list = isPriority ? (data.todos.priority[key] || []) : (data.todos.flat[key] || []);
-            list.forEach(item => {
-              if (item.plannedDay === day && item.plannedWeek === viewingMonday) {
-                plannedItems.push({ ...item, _section: isPriority ? "priority" : "flat", _subKey: key });
-              }
-            });
-          });
+          const plannedItems = getPlannedForDay(day);
           if (plannedItems.length === 0) return null;
+          const isDraggingThisDay = planDrag && planDrag.day === day;
+          const planIndicator = <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "1px 4px" }} />;
           return (
             <>
               <div style={{ borderTop: "1.5px solid #d4d3d0", margin: compact ? "5px 0 4px" : "8px 0 5px" }} />
-              {plannedItems.map(item => {
+              {plannedItems.map((item, idx) => {
                 const todoColor = item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#999996" : "#999996";
                 return (
-                  <div key={item.id} onClick={() => setModal({ type: "editTodo", section: item._section, subKey: item._subKey, item: { ...item, _moveTarget: "" } })}
-                    style={{
-                      fontSize: compact ? 11 : 13, lineHeight: 1.5, color: todoColor,
-                      padding: compact ? "1px 4px" : "2px 8px", margin: "0 -4px",
-                      cursor: "pointer", borderRadius: 4,
-                      fontStyle: "italic",
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >
-                    <span style={{ color: "#d4d3d0", marginRight: compact ? 4 : 6 }}>•</span>{item.text}
+                  <div key={item.id}>
+                    {isDraggingThisDay && planDropIdx === idx && planIndicator}
+                    <div
+                      draggable
+                      onDragStart={e => handlePlanDragStart(e, day, item.id)}
+                      onDragEnd={handlePlanDragEnd}
+                      onDragOver={e => handlePlanDragOver(e, day, idx)}
+                      onDrop={e => handlePlanDrop(e, day, idx)}
+                      onClick={() => setModal({ type: "editTodo", section: item._section, subKey: item._subKey, item: { ...item, _moveTarget: "" } })}
+                      style={{
+                        fontSize: compact ? 11 : 13, lineHeight: 1.5, color: todoColor,
+                        padding: compact ? "2px 4px" : "3px 8px", margin: "0 -4px",
+                        cursor: "grab", borderRadius: 4,
+                        fontStyle: "italic",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f2f1ee"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <span style={{ color: "#d4d3d0", marginRight: compact ? 4 : 6 }}>•</span>{item.text}
+                    </div>
+                    {idx === plannedItems.length - 1 && isDraggingThisDay && planDropIdx === idx + 1 && planIndicator}
                   </div>
                 );
               })}
+              {/* trailing drop zone so an item can be moved to the very end */}
+              {isDraggingThisDay && (
+                <div style={{ height: 12 }}
+                  onDragOver={e => handlePlanDragOver(e, day, plannedItems.length)}
+                  onDrop={e => handlePlanDrop(e, day, plannedItems.length)} />
+              )}
             </>
           );
         })()}
