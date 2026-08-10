@@ -2050,11 +2050,10 @@ export default function Planner() {
   return (
     <div style={{
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-      // No overall cap — the calendar grid fills the window. Individual tab
-      // sections below apply their own caps where line length matters.
+      // Width is governed by <main> in page.js; the calendar grid fills it.
+      // Individual tab sections below apply their own caps where line length matters.
       width: "100%",
-      margin: "0 auto",
-      padding: isMobile ? "0.25rem 0.5rem 2rem" : "0.5rem 1.5rem 2rem",
+      padding: isMobile ? "0.25rem 0 2rem" : "0.5rem 0 2rem",
       boxSizing: "border-box",
     }}>
 
