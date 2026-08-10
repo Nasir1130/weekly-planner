@@ -1222,17 +1222,25 @@ export default function Planner() {
     });
   }, []);
 
-  // Reset day indices when changing weeks
-  useEffect(() => {
-    if (weekOffset === 0) {
-      const today = new Date().getDay();
-      setMobileDayIndex(today === 0 ? 6 : today - 1);
-      setDesktopDayIndex(today === 0 ? 6 : today - 1);
-    } else {
-      setMobileDayIndex(0);
-      setDesktopDayIndex(0);
-    }
-  }, [weekOffset]);
+  // Jump to a different week from the *week* controls. This resets the focused
+  // day (to today, or Monday for other weeks). Day-level stepping must NOT go
+  // through here — it sets the week and day together and would otherwise have
+  // its day clobbered back to Monday when crossing a week boundary.
+  const goToWeek = (offset) => {
+    setWeekOffset(offset);
+    const todayIdx = (() => { const d = new Date().getDay(); return d === 0 ? 6 : d - 1; })();
+    const dayIdx = offset === 0 ? todayIdx : 0;
+    setMobileDayIndex(dayIdx);
+    setDesktopDayIndex(dayIdx);
+  };
+
+  // Step one day forward/back, rolling into the adjacent week at the edges.
+  const stepDay = (currentIdx, delta, setter) => {
+    const rawIdx = currentIdx + delta;
+    if (rawIdx < 0) { setWeekOffset(weekOffset - 1); setter(6); }
+    else if (rawIdx > 6) { setWeekOffset(weekOffset + 1); setter(0); }
+    else setter(rawIdx);
+  };
 
   const persist = useCallback((newData) => {
     setData(newData);
@@ -2031,22 +2039,23 @@ export default function Planner() {
 
   const mobileDayNav = (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 8 }}>
-      <button onClick={() => {
-        if (mobileDayIndex > 0) setMobileDayIndex(mobileDayIndex - 1);
-        else { setWeekOffset(weekOffset - 1); setMobileDayIndex(6); }
-      }} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
+      <button onClick={() => stepDay(mobileDayIndex, -1, setMobileDayIndex)} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
       <span style={{ fontSize: 16, fontWeight: 600, color: "#1a1a1a", minWidth: 100, textAlign: "center" }}>
         {DAYS[mobileDayIndex]} {formatDate(weekDates[mobileDayIndex])}
       </span>
-      <button onClick={() => {
-        if (mobileDayIndex < 6) setMobileDayIndex(mobileDayIndex + 1);
-        else { setWeekOffset(weekOffset + 1); setMobileDayIndex(0); }
-      }} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
+      <button onClick={() => stepDay(mobileDayIndex, 1, setMobileDayIndex)} style={{ fontSize: 20, padding: "2px 10px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
     </div>
   );
 
   return (
-    <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif", maxWidth: 960, margin: "0 auto", padding: isMobile ? "0.25rem 0.5rem 2rem" : "0.5rem 0 2rem" }}>
+    <div style={{
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      // Wide enough for the 7-day grid to breathe on a large display, while
+      // still centring on very wide monitors rather than sprawling edge to edge.
+      maxWidth: 1500,
+      margin: "0 auto",
+      padding: isMobile ? "0.25rem 0.5rem 2rem" : "0.5rem 1rem 2rem",
+    }}>
 
       {/* ═══ WEEKLY SCHEDULE ═══ */}
       <div style={{ marginBottom: "1.5rem", paddingBottom: "1.5rem", borderBottom: "1.5px solid #d4d3d0" }}>
@@ -2118,15 +2127,15 @@ export default function Planner() {
           </div>
           {/* Week navigation */}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ fontSize: 18, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
+            <button onClick={() => goToWeek(weekOffset - 1)} style={{ fontSize: 18, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
             {weekOffset !== 0 && (
-              <button onClick={() => setWeekOffset(0)} style={{ fontSize: 12, padding: "3px 8px", background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>This week</button>
+              <button onClick={() => goToWeek(0)} style={{ fontSize: 12, padding: "3px 8px", background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>This week</button>
             )}
             <span style={{ fontSize: 15, fontWeight: 600, color: "#1a1a1a", minWidth: 130, textAlign: "center" }}>
               {formatDate(weekDates[0])} – {formatDate(weekDates[6])}
               {weekOffset !== 0 && <span style={{ fontSize: 12, fontWeight: 400, color: "#999996", marginLeft: 4 }}>({weekOffset > 0 ? "+" : ""}{weekOffset}w)</span>}
             </span>
-            <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ fontSize: 18, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
+            <button onClick={() => goToWeek(weekOffset + 1)} style={{ fontSize: 18, padding: "2px 8px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
           </div>
           {/* Mobile day navigation */}
           {isMobile && !data.hideCalendar && mobileDayNav}
@@ -2481,7 +2490,7 @@ export default function Planner() {
 
       {/* ═══ NOTES TAB ═══ */}
       {activeTab === "notes" && (
-        <div>
+        <div style={{ maxWidth: 880 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
             <button onClick={() => setModal({ type: "manageNoteCategories" })} style={{
               fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
@@ -2490,15 +2499,15 @@ export default function Planner() {
               onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
             >&#9881; Categories</button>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <button onClick={() => setWeekOffset(weekOffset - 1)} style={{ fontSize: 18, padding: "2px 6px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
+              <button onClick={() => goToWeek(weekOffset - 1)} style={{ fontSize: 18, padding: "2px 6px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8592;</button>
               {weekOffset !== 0 && (
-                <button onClick={() => setWeekOffset(0)} style={{ fontSize: 12, padding: "3px 8px", background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>This week</button>
+                <button onClick={() => goToWeek(0)} style={{ fontSize: 12, padding: "3px 8px", background: "#E6F1FB", color: "#185FA5", borderColor: "#85B7EB" }}>This week</button>
               )}
               <span style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a" }}>
                 {formatDate(weekDates[0])} – {formatDate(weekDates[6])}
                 {weekOffset !== 0 && <span style={{ fontSize: 12, fontWeight: 400, color: "#999996", marginLeft: 4 }}>({weekOffset > 0 ? "+" : ""}{weekOffset}w)</span>}
               </span>
-              <button onClick={() => setWeekOffset(weekOffset + 1)} style={{ fontSize: 18, padding: "2px 6px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
+              <button onClick={() => goToWeek(weekOffset + 1)} style={{ fontSize: 18, padding: "2px 6px", border: "none", background: "transparent", color: "#666663", cursor: "pointer", fontWeight: 700 }}>&#8594;</button>
             </div>
           </div>
 
@@ -2577,7 +2586,7 @@ export default function Planner() {
 
       {/* ═══ LIBRARY TAB ═══ */}
       {activeTab === "library" && (
-        <div>
+        <div style={{ maxWidth: 880 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
             <button onClick={() => setModal({ type: "manageLibraryCategories" })} style={{
               fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
