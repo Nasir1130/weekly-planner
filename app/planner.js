@@ -412,11 +412,28 @@ async function loadData() {
   }
 }
 
+// Saves are serialized: only one request is in flight at a time, and if
+// several saves are requested while one is running, only the newest is sent
+// next. This keeps an older save from landing after a newer one — important
+// now that floating note panels autosave as you type.
+let saveInFlight = false;
+let pendingSave = null;
 async function saveData(data) {
+  pendingSave = data;
+  if (saveInFlight) return;
+  saveInFlight = true;
   try {
-    await savePlannerData(data);
-  } catch (e) {
-    console.error("Save failed:", e);
+    while (pendingSave) {
+      const next = pendingSave;
+      pendingSave = null;
+      try {
+        await savePlannerData(next);
+      } catch (e) {
+        console.error("Save failed:", e);
+      }
+    }
+  } finally {
+    saveInFlight = false;
   }
 }
 
@@ -1065,7 +1082,7 @@ function TodoItemForm({ item, onSave, onCancel, onDelete, categories, viewingMon
   );
 }
 
-function NoteEntryForm({ entry, onSave, onCancel, onDelete, todoCategories, onAddTodo }) {
+function NoteEntryForm({ entry, onSave, onCancel, onDelete, todoCategories, onAddTodo, onPopOut }) {
   const [text, setText] = useState(entry?.text || "");
   const [todoPicker, setTodoPicker] = useState(null);
   const [todoConfirm, setTodoConfirm] = useState(null);
@@ -1113,6 +1130,16 @@ function NoteEntryForm({ entry, onSave, onCancel, onDelete, todoCategories, onAd
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ fontSize: 16, fontWeight: 500 }}>{entry ? "Edit note" : "New note"}</div>
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          {onPopOut && (
+            <button onClick={() => onPopOut(text)} title="Pop out into a floating panel you can keep open while using the rest of the planner" style={{
+              fontSize: 12, padding: "2px 8px", border: "1px solid #d4d3d0", marginRight: 6,
+              background: "transparent", color: "#666663", cursor: "pointer", borderRadius: 4,
+              fontFamily: "inherit", lineHeight: 1.3,
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+            >⧉ Pop out</button>
+          )}
           <button onMouseDown={e => e.preventDefault()} onClick={() => wrapSelection("**")} title="Bold — select text first" style={{
             fontSize: 13, fontWeight: 700, padding: "2px 8px", border: "1px solid #d4d3d0",
             background: "transparent", color: "#666663", cursor: "pointer", borderRadius: 4,
@@ -1182,6 +1209,241 @@ function NoteEntryForm({ entry, onSave, onCancel, onDelete, todoCategories, onAd
   );
 }
 
+// Tracks whether a mouse button / finger is currently down anywhere on the
+// page. Panel saves wait for the press to finish: a save can change the height
+// of the note card behind the panel, and if that reflow happens between
+// mouse-down and mouse-up the browser drops the click.
+let pointerIsDown = false;
+let pointerUpWaiters = [];
+if (typeof window !== "undefined") {
+  window.addEventListener("pointerdown", () => { pointerIsDown = true; }, true);
+  const release = () => {
+    pointerIsDown = false;
+    const waiters = pointerUpWaiters;
+    pointerUpWaiters = [];
+    // setTimeout lets the click event dispatch before the save re-renders
+    waiters.forEach(fn => setTimeout(fn, 0));
+  };
+  window.addEventListener("pointerup", release, true);
+  window.addEventListener("pointercancel", release, true);
+}
+function afterPointerRelease(fn) {
+  if (!pointerIsDown) { fn(); return; }
+  if (!pointerUpWaiters.includes(fn)) pointerUpWaiters.push(fn);
+}
+
+// ─── FLOATING NOTE PANEL ─────────────────────────────────────────
+// A non-modal, draggable, resizable note editor. Several can be open at once,
+// and the rest of the planner stays fully usable behind them. Text autosaves
+// shortly after you stop typing, and immediately when the panel loses focus.
+function FloatingNotePanel({
+  title, subtitle, accent, initialText, initialPos, z,
+  onSave, onClose, onDelete, onFocus, todoCategories, onAddTodo,
+}) {
+  const [text, setText] = useState(initialText || "");
+  const [pos, setPos] = useState(initialPos);
+  const [size, setSize] = useState({ w: 380, h: 320 });
+  const [minimized, setMinimized] = useState(false);
+  const [status, setStatus] = useState("");
+  const [todoPicker, setTodoPicker] = useState(null);
+  const [todoConfirm, setTodoConfirm] = useState(null);
+  const textRef = useRef(null);
+  const textValRef = useRef(text);
+  const lastSavedRef = useRef(initialText || "");
+  const timerRef = useRef(null);
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+  textValRef.current = text;
+
+  const saveNow = useCallback(() => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    const t = textValRef.current;
+    if (t.trim() === lastSavedRef.current.trim()) { setStatus(s => (s === "saving" ? "saved" : s)); return; }
+    if (!t.trim()) return; // never autosave an empty note over real content
+    onSaveRef.current(t);
+    lastSavedRef.current = t;
+    setStatus("saved");
+  }, []);
+  // Autosave/blur path: wait out any in-progress click first
+  const flush = useCallback(() => afterPointerRelease(saveNow), [saveNow]);
+
+  // Debounced autosave while typing
+  useEffect(() => {
+    if (text.trim() === lastSavedRef.current.trim()) return;
+    setStatus("saving");
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(flush, 700);
+  }, [text, flush]);
+
+  // Save on tab close / reload as a best effort
+  useEffect(() => {
+    const handler = () => saveNow();
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [saveNow]);
+
+  useEffect(() => { textRef.current?.focus(); }, []);
+
+  const handleClose = () => { saveNow(); onClose(); };
+
+  // Drag by the header
+  const startDrag = (e) => {
+    if (e.target.closest("button")) return;
+    e.preventDefault();
+    onFocus();
+    const startX = e.clientX, startY = e.clientY;
+    const origin = { ...pos };
+    const move = (ev) => {
+      const nx = origin.x + (ev.clientX - startX);
+      const ny = origin.y + (ev.clientY - startY);
+      setPos({
+        x: Math.min(Math.max(nx, 80 - size.w), window.innerWidth - 80),
+        y: Math.min(Math.max(ny, 0), window.innerHeight - 40),
+      });
+    };
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  // Resize from the bottom-right grip
+  const startResize = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onFocus();
+    const startX = e.clientX, startY = e.clientY;
+    const origin = { ...size };
+    const move = (ev) => {
+      setSize({
+        w: Math.max(260, origin.w + (ev.clientX - startX)),
+        h: Math.max(180, origin.h + (ev.clientY - startY)),
+      });
+    };
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  const wrapSelection = (marker) => {
+    const ta = textRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart, end = ta.selectionEnd;
+    if (start === end) return;
+    const selected = text.slice(start, end), before = text.slice(0, start), after = text.slice(end);
+    if (before.endsWith(marker) && after.startsWith(marker)) {
+      setText(before.slice(0, -marker.length) + selected + after.slice(marker.length));
+      setTimeout(() => { ta.selectionStart = start - marker.length; ta.selectionEnd = end - marker.length; ta.focus(); }, 0);
+    } else {
+      setText(before + marker + selected + marker + after);
+      setTimeout(() => { ta.selectionStart = start + marker.length; ta.selectionEnd = end + marker.length; ta.focus(); }, 0);
+    }
+  };
+
+  const handleCreateTodo = () => {
+    const ta = textRef.current;
+    if (!ta) return;
+    const selected = ta.selectionStart !== ta.selectionEnd ? text.slice(ta.selectionStart, ta.selectionEnd).trim() : "";
+    const todoText = (selected || text.trim()).replace(/\*\*/g, "").replace(/__/g, "");
+    if (todoText) setTodoPicker({ text: todoText });
+  };
+
+  const iconBtn = {
+    fontSize: 13, lineHeight: 1, padding: "3px 7px", border: "1px solid transparent",
+    background: "transparent", color: "#666663", cursor: "pointer", borderRadius: 4, fontFamily: "inherit",
+  };
+
+  return (
+    <div
+      onPointerDown={onFocus}
+      style={{
+        position: "fixed", left: pos.x, top: pos.y, zIndex: z,
+        width: size.w, height: minimized ? "auto" : size.h,
+        display: "flex", flexDirection: "column",
+        background: "#ffffff", borderRadius: 10, overflow: "hidden",
+        border: "1px solid #c9c7c0", borderTop: `3px solid ${accent.text}`,
+        boxShadow: "0 10px 30px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08)",
+      }}
+    >
+      {/* Header — drag handle */}
+      <div onPointerDown={startDrag} style={{
+        display: "flex", alignItems: "center", gap: 6, padding: "6px 6px 6px 12px",
+        background: accent.bg, cursor: "move", userSelect: "none", flexShrink: 0,
+      }}>
+        <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: accent.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {minimized && text.trim() ? text.trim().split("\n")[0].replace(/\*\*|__/g, "") : title}
+          </div>
+          <div style={{ fontSize: 10, color: "#999996", whiteSpace: "nowrap" }}>
+            {minimized ? title : subtitle}
+            {status === "saving" && <span style={{ marginLeft: 6 }}>· saving…</span>}
+            {status === "saved" && <span style={{ marginLeft: 6, color: "#3B6D11" }}>· saved</span>}
+          </div>
+        </div>
+        {!minimized && (
+          <>
+            <button onMouseDown={e => e.preventDefault()} onClick={() => wrapSelection("**")} title="Bold" style={{ ...iconBtn, fontWeight: 700 }}>B</button>
+            <button onMouseDown={e => e.preventDefault()} onClick={() => wrapSelection("__")} title="Underline" style={{ ...iconBtn, textDecoration: "underline" }}>U</button>
+          </>
+        )}
+        <button onClick={() => { saveNow(); setMinimized(m => !m); }} title={minimized ? "Expand" : "Minimize"} style={iconBtn}>{minimized ? "▢" : "–"}</button>
+        <button onClick={handleClose} title="Close (saves first)" style={{ ...iconBtn, fontSize: 16 }}>×</button>
+      </div>
+
+      {!minimized && (
+        <>
+          <textarea
+            ref={textRef}
+            value={text}
+            placeholder="Write your thoughts..."
+            onChange={e => setText(e.target.value)}
+            onBlur={flush}
+            style={{
+              flex: 1, minHeight: 0, width: "100%", resize: "none",
+              border: "none", borderRadius: 0, outline: "none",
+              padding: "10px 12px", fontSize: 14, lineHeight: 1.6, fontFamily: "inherit",
+            }}
+          />
+          {todoPicker && (
+            <div style={{ background: "#f8f8f6", padding: "8px 10px", borderTop: "1px solid #eeede9", flexShrink: 0 }}>
+              <div style={{ fontSize: 11, color: "#666663", marginBottom: 5 }}>
+                Add to-do: <span style={{ color: "#1a1a1a", fontWeight: 500 }}>"{todoPicker.text.length > 50 ? todoPicker.text.slice(0, 47) + "..." : todoPicker.text}"</span>
+              </div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {todoCategories.map(cat => (
+                  <button key={cat.name} onClick={() => {
+                    onAddTodo(todoPicker.text, cat);
+                    setTodoPicker(null);
+                    setTodoConfirm(cat.label);
+                    setTimeout(() => setTodoConfirm(null), 2000);
+                  }} style={{ fontSize: 11, padding: "3px 8px", background: cat.bg, color: cat.text, borderColor: cat.bg, borderRadius: 6 }}>{cat.label}</button>
+                ))}
+                <button onClick={() => setTodoPicker(null)} style={{ fontSize: 11, padding: "3px 6px", border: "none", color: "#999996" }}>✕</button>
+              </div>
+            </div>
+          )}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "5px 8px",
+            borderTop: "1px solid #eeede9", background: "#fbfbfa", flexShrink: 0, position: "relative",
+          }}>
+            {onDelete && (
+              <button onClick={onDelete} style={{ fontSize: 11, padding: "2px 8px", color: "#A32D2D", borderColor: "#F09595" }}>Delete</button>
+            )}
+            {!todoPicker && (
+              <button onClick={handleCreateTodo} style={{ fontSize: 11, padding: "2px 8px", color: "#666663" }}>→ To-do</button>
+            )}
+            {todoConfirm && <span style={{ fontSize: 11, color: "#3B6D11" }}>✓ Added to {todoConfirm}</span>}
+            <span style={{ flex: 1 }} />
+            <div onPointerDown={startResize} title="Drag to resize" style={{
+              width: 14, height: 14, cursor: "nwse-resize", marginRight: -2,
+              background: "linear-gradient(135deg, transparent 50%, #c9c7c0 50%, #c9c7c0 58%, transparent 58%, transparent 70%, #c9c7c0 70%, #c9c7c0 78%, transparent 78%)",
+            }} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── MAIN PLANNER ────────────────────────────────────────────────
 
 export default function Planner() {
@@ -1198,6 +1460,12 @@ export default function Planner() {
   const [planDropIdx, setPlanDropIdx] = useState(null);
   const planDragRef = useRef(null);
   const [weekOffset, setWeekOffset] = useState(0);
+  // Open floating note panels: { pid, kind: "note"|"library", category, weekKey, entryId, isNew, initialText, initialPos, z }
+  const [floatingNotes, setFloatingNotes] = useState([]);
+  const zCounterRef = useRef(900);
+  // Always holds the newest planner data, so delayed saves (panel autosave
+  // timers) never write back a stale snapshot over newer changes.
+  const dataRef = useRef(null);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileDayIndex, setMobileDayIndex] = useState(() => {
     const today = new Date().getDay();
@@ -1243,9 +1511,21 @@ export default function Planner() {
   };
 
   const persist = useCallback((newData) => {
+    dataRef.current = newData;
     setData(newData);
     saveData(newData);
   }, []);
+  // Every write goes through persist, so the rendered `data` is always the newest.
+  dataRef.current = data;
+
+  // Apply a change to the *latest* data rather than this render's snapshot.
+  // Returning null from the updater means "nothing to save".
+  const persistUpdate = (updater) => {
+    const base = dataRef.current;
+    if (!base) return;
+    const next = updater(base);
+    if (next) persist(next);
+  };
 
   const weekDates = getWeekDates(weekOffset);
   const viewingMonday = getMondayStr(weekOffset);
@@ -1570,6 +1850,7 @@ export default function Planner() {
     });
     deletions.forEach(cat => { delete newNoteCollapsed[cat]; });
     persist({ ...data, notes, noteCategories: finalOrder, noteCollapsed: newNoteCollapsed, noteIndents: newIndents || {} });
+    syncPanelsAfterCategoryChange("note", renames, deletions);
     setModal(null);
   };
 
@@ -1605,6 +1886,117 @@ export default function Planner() {
     setModal(null);
   };
 
+  // ─── FLOATING NOTE PANELS ───
+  const findPanelFor = (kind, entryId) => floatingNotes.find(p => p.kind === kind && p.entryId === entryId);
+
+  const focusPanel = (pid) => {
+    zCounterRef.current += 1;
+    const z = zCounterRef.current;
+    setFloatingNotes(list => list.map(p => (p.pid === pid ? { ...p, z } : p)));
+  };
+
+  const openFloating = ({ kind, category, weekKey, entry, text }) => {
+    const existing = entry && findPanelFor(kind, entry.id);
+    if (existing) { focusPanel(existing.pid); setModal(null); return; }
+    zCounterRef.current += 1;
+    const n = floatingNotes.length;
+    const w = 380;
+    const initialPos = {
+      x: Math.max(16, window.innerWidth - w - 40 - n * 28),
+      y: Math.min(80 + n * 28, Math.max(16, window.innerHeight - 360)),
+    };
+    const panel = {
+      pid: uid(),
+      kind, category,
+      weekKey: kind === "note" ? weekKey : null,
+      entryId: entry ? entry.id : uid(),   // new notes get their id up front so autosave upserts one entry
+      isNew: !entry,
+      initialText: text ?? entry?.text ?? "",
+      initialPos,
+      z: zCounterRef.current,
+    };
+    setFloatingNotes(list => [...list, panel]);
+    setModal(null);
+    // A popped-out new note that already has text is saved right away
+    if (panel.isNew && panel.initialText.trim()) savePanel(panel, panel.initialText);
+  };
+
+  const closePanel = (pid) => setFloatingNotes(list => list.filter(p => p.pid !== pid));
+
+  // Upsert: update the entry if it exists, otherwise create it with the panel's id.
+  const savePanel = (panel, rawText) => {
+    const text = rawText.trim();
+    if (!text) return;
+    persistUpdate(d => {
+      const now = Date.now();
+      if (panel.kind === "note") {
+        const notes = JSON.parse(JSON.stringify(d.notes || {}));
+        if (!notes[panel.weekKey]) notes[panel.weekKey] = {};
+        const list = notes[panel.weekKey][panel.category] || (notes[panel.weekKey][panel.category] = []);
+        const idx = list.findIndex(e => e.id === panel.entryId);
+        if (idx >= 0) {
+          if (list[idx].text === text) return null;
+          list[idx] = { ...list[idx], text, updatedAt: now };
+        } else {
+          list.push({ id: panel.entryId, text, createdAt: now, updatedAt: now });
+        }
+        return { ...d, notes };
+      }
+      const library = JSON.parse(JSON.stringify(d.library || {}));
+      const list = library[panel.category] || (library[panel.category] = []);
+      const idx = list.findIndex(e => e.id === panel.entryId);
+      if (idx >= 0) {
+        if (list[idx].text === text) return null;
+        list[idx] = { ...list[idx], text, updatedAt: now };
+      } else {
+        list.push({ id: panel.entryId, text, createdAt: now, updatedAt: now });
+      }
+      return { ...d, library };
+    });
+  };
+
+  const deletePanelEntry = (panel) => {
+    persistUpdate(d => {
+      if (panel.kind === "note") {
+        const notes = JSON.parse(JSON.stringify(d.notes || {}));
+        const list = notes[panel.weekKey]?.[panel.category];
+        if (!list) return null;
+        notes[panel.weekKey][panel.category] = list.filter(e => e.id !== panel.entryId);
+        return { ...d, notes };
+      }
+      const library = JSON.parse(JSON.stringify(d.library || {}));
+      if (!library[panel.category]) return null;
+      library[panel.category] = library[panel.category].filter(e => e.id !== panel.entryId);
+      return { ...d, library };
+    });
+    closePanel(panel.pid);
+  };
+
+  const addTodoFromNote = (todoText, cat) => {
+    persistUpdate(d => {
+      const newItem = { id: uid(), text: todoText, bold: false, checked: false };
+      const newTodos = JSON.parse(JSON.stringify(d.todos));
+      if (cat.section === "priority") newTodos.priority[cat.name] = [...(newTodos.priority[cat.name] || []), newItem];
+      else newTodos.flat[cat.name] = [...(newTodos.flat[cat.name] || []), newItem];
+      return { ...d, todos: newTodos };
+    });
+  };
+
+  // Keep open panels pointed at the right category after a rename/delete
+  const syncPanelsAfterCategoryChange = (kind, renames, deletions) => {
+    setFloatingNotes(list => list
+      .filter(p => !(p.kind === kind && deletions.includes(p.category)))
+      .map(p => (p.kind === kind && renames[p.category] ? { ...p, category: renames[p.category] } : p)));
+  };
+
+  // Clicking a note card: if it's already floating, bring that panel forward
+  // rather than opening a second, conflicting editor in a modal.
+  const openEntry = (kind, category, entry) => {
+    const existing = findPanelFor(kind, entry.id);
+    if (existing) { focusPanel(existing.pid); return; }
+    setModal({ type: kind === "note" ? "editNote" : "editLibrary", category, entry });
+  };
+
   const toggleLibraryCollapse = (key) => {
     const cur = data.libraryCollapsed || {};
     const nowCollapsed = !cur[key];
@@ -1629,6 +2021,7 @@ export default function Planner() {
     deletions.forEach(cat => { delete library[cat]; delete newCollapsed[cat]; });
     additions.forEach(cat => { if (!library[cat]) library[cat] = []; });
     persist({ ...data, library, libraryCategories: finalOrder, libraryCollapsed: newCollapsed, libraryIndents: newIndents || {} });
+    syncPanelsAfterCategoryChange("library", renames, deletions);
     setModal(null);
   };
 
@@ -2556,7 +2949,7 @@ export default function Planner() {
                         cursor: "pointer",
                         transition: "box-shadow 0.15s",
                       }}
-                        onClick={() => setModal({ type: "editNote", category: cat, entry })}
+                        onClick={() => openEntry("note", cat, entry)}
                         onMouseEnter={e => e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)"}
                         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
                       >
@@ -2567,6 +2960,9 @@ export default function Planner() {
                           {formatNoteTimestamp(entry.createdAt)}
                           {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
                             <span style={{ marginLeft: 8 }}>(edited {formatNoteTimestamp(entry.updatedAt)})</span>
+                          )}
+                          {findPanelFor("note", entry.id) && (
+                            <span style={{ marginLeft: 8, fontWeight: 600 }}>⧉ open in panel</span>
                           )}
                         </div>
                       </div>
@@ -2639,7 +3035,7 @@ export default function Planner() {
                         cursor: "pointer",
                         transition: "box-shadow 0.15s",
                       }}
-                        onClick={() => setModal({ type: "editLibrary", category: cat, entry })}
+                        onClick={() => openEntry("library", cat, entry)}
                         onMouseEnter={e => e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)"}
                         onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
                       >
@@ -2650,6 +3046,9 @@ export default function Planner() {
                           {formatNoteTimestamp(entry.createdAt)}
                           {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
                             <span style={{ marginLeft: 8 }}>(edited {formatNoteTimestamp(entry.updatedAt)})</span>
+                          )}
+                          {findPanelFor("library", entry.id) && (
+                            <span style={{ marginLeft: 8, fontWeight: 600 }}>⧉ open in panel</span>
                           )}
                         </div>
                       </div>
@@ -2843,6 +3242,7 @@ export default function Planner() {
           <NoteEntryForm
             onSave={text => addNoteEntry(modal.category, text)}
             onCancel={() => setModal(null)}
+            onPopOut={isMobile ? undefined : (text) => openFloating({ kind: "note", category: modal.category, weekKey: viewingMonday, entry: null, text })}
             todoCategories={[
               ...PRIORITIES.map(p => ({ name: p, label: `⚡ ${p}`, section: "priority", ...priorityColors[p] })),
               ...flatCategories.map(c => ({ name: c, label: c, section: "flat", ...getCatColor(c, flatCategories) })),
@@ -2863,6 +3263,7 @@ export default function Planner() {
             entry={modal.entry}
             onSave={text => editNoteEntry(modal.category, modal.entry.id, text)}
             onCancel={() => setModal(null)}
+            onPopOut={isMobile ? undefined : (text) => openFloating({ kind: "note", category: modal.category, weekKey: viewingMonday, entry: modal.entry, text })}
             onDelete={() => deleteNoteEntry(modal.category, modal.entry.id)}
             todoCategories={[
               ...PRIORITIES.map(p => ({ name: p, label: `⚡ ${p}`, section: "priority", ...priorityColors[p] })),
@@ -2897,6 +3298,7 @@ export default function Planner() {
           <NoteEntryForm
             onSave={text => addLibraryEntry(modal.category, text)}
             onCancel={() => setModal(null)}
+            onPopOut={isMobile ? undefined : (text) => openFloating({ kind: "library", category: modal.category, entry: null, text })}
             todoCategories={[
               ...PRIORITIES.map(p => ({ name: p, label: `⚡ ${p}`, section: "priority", ...priorityColors[p] })),
               ...flatCategories.map(c => ({ name: c, label: c, section: "flat", ...getCatColor(c, flatCategories) })),
@@ -2917,6 +3319,7 @@ export default function Planner() {
             entry={modal.entry}
             onSave={text => editLibraryEntry(modal.category, modal.entry.id, text)}
             onCancel={() => setModal(null)}
+            onPopOut={isMobile ? undefined : (text) => openFloating({ kind: "library", category: modal.category, entry: modal.entry, text })}
             onDelete={() => deleteLibraryEntry(modal.category, modal.entry.id)}
             todoCategories={[
               ...PRIORITIES.map(p => ({ name: p, label: `⚡ ${p}`, section: "priority", ...priorityColors[p] })),
@@ -2932,6 +3335,34 @@ export default function Planner() {
           />
         </Modal>
       )}
+      {/* ═══ FLOATING NOTE PANELS ═══ */}
+      {floatingNotes.map(p => {
+        const cats = p.kind === "note" ? noteCategories : libraryCategories;
+        const accent = getNoteCatColor(p.category, cats);
+        const [, wm, wd] = (p.weekKey || "--").split("-");
+        return (
+          <FloatingNotePanel
+            key={p.pid}
+            title={p.category}
+            subtitle={p.kind === "note" ? `Notes · week of ${Number(wm)}/${Number(wd)}` : "Library"}
+            accent={accent}
+            initialText={p.initialText}
+            initialPos={p.initialPos}
+            z={p.z}
+            onFocus={() => { if (p.z !== zCounterRef.current) focusPanel(p.pid); }}
+            onSave={(text) => savePanel(p, text)}
+            onClose={() => closePanel(p.pid)}
+            onDelete={p.isNew && !((p.kind === "note" ? (data.notes?.[p.weekKey]?.[p.category] || []) : (data.library?.[p.category] || [])).some(e => e.id === p.entryId))
+              ? undefined
+              : () => deletePanelEntry(p)}
+            todoCategories={[
+              ...PRIORITIES.map(pr => ({ name: pr, label: `⚡ ${pr}`, section: "priority", ...priorityColors[pr] })),
+              ...flatCategories.map(c => ({ name: c, label: c, section: "flat", ...getCatColor(c, flatCategories) })),
+            ]}
+            onAddTodo={addTodoFromNote}
+          />
+        );
+      })}
     </div>
   );
 }
