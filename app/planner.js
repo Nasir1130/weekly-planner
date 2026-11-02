@@ -1444,6 +1444,210 @@ function FloatingNotePanel({
   );
 }
 
+// ─── SEARCH ──────────────────────────────────────────────────────
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+// Plain searchable text: drop **bold** / __underline__ markers, flatten newlines
+function plainText(str) {
+  return (str || "").replace(/\*\*|__/g, "").replace(/\s*\n\s*/g, " ").trim();
+}
+function searchTerms(query) {
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+// Every term must appear somewhere (any order), so "supervision Kim" finds
+// "Kim mentioned supervision" as well as an exact phrase.
+function matchesAll(text, terms) {
+  const lower = text.toLowerCase();
+  return terms.every(t => lower.includes(t));
+}
+// A short window around the first match, for long notes
+function makeSnippet(text, terms, radius = 60, length = 170) {
+  const lower = text.toLowerCase();
+  let first = -1;
+  terms.forEach(t => {
+    const i = lower.indexOf(t);
+    if (i !== -1 && (first === -1 || i < first)) first = i;
+  });
+  if (text.length <= length || first === -1) return text.length <= length ? text : text.slice(0, length) + "…";
+  let start = Math.max(0, first - radius);
+  if (start > 0) {
+    const space = text.indexOf(" ", start);
+    if (space !== -1 && space < first) start = space + 1;
+  }
+  const end = Math.min(text.length, start + length);
+  return (start > 0 ? "…" : "") + text.slice(start, end) + (end < text.length ? "…" : "");
+}
+function Highlighted({ text, terms }) {
+  if (!terms.length) return text;
+  const parts = text.split(new RegExp(`(${terms.map(escapeRegExp).join("|")})`, "gi"));
+  // With one capture group, the matched pieces land on the odd indices
+  return parts.map((p, i) => (i % 2 === 1
+    ? <mark key={i} style={{ background: "#FFE58F", color: "inherit", borderRadius: 2, padding: "0 1px" }}>{p}</mark>
+    : <span key={i}>{p}</span>));
+}
+
+function SearchModal({ data, flatCategories, noteCategories, libraryCategories, initialQuery, onQueryChange, onSelect, onClose }) {
+  const [query, setQuery] = useState(initialQuery || "");
+  const [selected, setSelected] = useState(0);
+  const inputRef = useRef(null);
+  const listRef = useRef(null);
+  const backdropRef = useRef(null);
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
+
+  const terms = searchTerms(query);
+  const ready = query.trim().length >= 2;
+
+  const groups = (() => {
+    if (!ready) return [];
+    const out = [];
+
+    // To-dos: priority levels, then categories in their display order
+    const todos = [];
+    PRIORITIES.forEach(p => (data.todos.priority[p] || []).forEach(item => {
+      const t = plainText(item.text);
+      if (matchesAll(t, terms)) todos.push({ kind: "todo", id: item.id, text: t, section: "priority", key: p, meta: `${p} priority` });
+    }));
+    flatCategories.forEach(c => (data.todos.flat[c] || []).forEach(item => {
+      const t = plainText(item.text);
+      if (matchesAll(t, terms)) todos.push({ kind: "todo", id: item.id, text: t, section: "flat", key: c, meta: c });
+    }));
+    if (todos.length) out.push({ label: "To-Do", items: todos });
+
+    // Notes: newest week first, newest entry first within a week
+    const notes = [];
+    Object.keys(data.notes || {}).sort().reverse().forEach(week => {
+      const [, m, d] = week.split("-");
+      const weekLabel = `week of ${Number(m)}/${Number(d)}`;
+      const inWeek = [];
+      noteCategories.forEach(c => ((data.notes[week] || {})[c] || []).forEach(entry => {
+        const t = plainText(entry.text);
+        if (matchesAll(t, terms)) inWeek.push({ kind: "note", id: entry.id, text: t, key: c, week, meta: `${c} · ${weekLabel}`, at: entry.updatedAt || 0 });
+      }));
+      inWeek.sort((a, b) => b.at - a.at);
+      notes.push(...inWeek);
+    });
+    if (notes.length) out.push({ label: "Notes", items: notes });
+
+    const lib = [];
+    libraryCategories.forEach(c => ((data.library || {})[c] || []).forEach(entry => {
+      const t = plainText(entry.text);
+      if (matchesAll(t, terms)) lib.push({ kind: "library", id: entry.id, text: t, key: c, meta: c });
+    }));
+    if (lib.length) out.push({ label: "Library", items: lib });
+
+    const done = [];
+    (data.completed || []).slice().reverse().forEach(item => {
+      const t = plainText(item.text);
+      if (matchesAll(t, terms)) done.push({ kind: "completed", id: item.id, text: t, meta: `done ${formatCompletedDate(item.completedAt)}${item.fromKey ? ` · from ${item.fromKey}` : ""}` });
+    });
+    if (done.length) out.push({ label: "Completed", items: done });
+
+    return out;
+  })();
+
+  const CAP = 40;
+  const flat = [];
+  groups.forEach(g => g.items.slice(0, CAP).forEach(r => flat.push(r)));
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+
+  useEffect(() => { setSelected(0); }, [query]);
+  useEffect(() => {
+    const el = listRef.current?.querySelector(`[data-result-idx="${selected}"]`);
+    if (el) el.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+
+  const choose = (r) => { if (r) onSelect(r); };
+  const onKeyDown = (e) => {
+    if (e.key === "Escape") { e.preventDefault(); onClose(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); setSelected(i => Math.min(i + 1, flat.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setSelected(i => Math.max(i - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); choose(flat[selected]); }
+  };
+
+  const kindIcon = { todo: "☐", note: "✎", library: "❏", completed: "✓" };
+  let runningIdx = 0;
+
+  return (
+    <div ref={backdropRef}
+      onMouseDown={e => { if (e.target === backdropRef.current) onClose(); }}
+      style={{
+        position: "fixed", inset: 0, zIndex: 5000, background: "rgba(0,0,0,0.35)",
+        display: "flex", justifyContent: "center", alignItems: "flex-start",
+        padding: "10vh 1rem 1rem",
+      }}>
+      <div style={{
+        width: "100%", maxWidth: 640, maxHeight: "75vh",
+        display: "flex", flexDirection: "column",
+        background: "#ffffff", borderRadius: 12, overflow: "hidden",
+        border: "1px solid #c9c7c0", boxShadow: "0 18px 50px rgba(0,0,0,0.25)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid #eeede9" }}>
+          <span style={{ fontSize: 16, color: "#999996" }}>⌕</span>
+          <input ref={inputRef} value={query}
+            onChange={e => { setQuery(e.target.value); onQueryChange(e.target.value); }}
+            onKeyDown={onKeyDown}
+            placeholder="Search to-dos, notes, library…"
+            style={{ flex: 1, border: "none", outline: "none", fontSize: 16, padding: "6px 0" }} />
+          {ready && <span style={{ fontSize: 11, color: "#999996", whiteSpace: "nowrap" }}>{total} result{total === 1 ? "" : "s"}</span>}
+          <button onClick={onClose} title="Close (Esc)" style={{ fontSize: 16, lineHeight: 1, padding: "2px 7px", border: "none", color: "#999996" }}>×</button>
+        </div>
+
+        <div ref={listRef} style={{ overflowY: "auto", padding: "4px 0 8px" }}>
+          {!ready && (
+            <div style={{ padding: "16px 18px", fontSize: 12, color: "#999996", lineHeight: 1.6 }}>
+              Type at least 2 characters. Multiple words match in any order.<br />
+              ↑ ↓ to move · Enter to open · Esc to close · ⌘K or / to search from anywhere
+            </div>
+          )}
+          {ready && total === 0 && (
+            <div style={{ padding: "16px 18px", fontSize: 13, color: "#999996" }}>No matches for “{query.trim()}”</div>
+          )}
+          {groups.map(g => (
+            <div key={g.label}>
+              <div style={{
+                fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase",
+                color: "#999996", padding: "10px 18px 4px",
+              }}>{g.label} · {g.items.length}</div>
+              {g.items.slice(0, CAP).map(r => {
+                const idx = runningIdx++;
+                const active = idx === selected;
+                return (
+                  <div key={r.kind + r.id} data-result-idx={idx}
+                    onMouseEnter={() => setSelected(idx)}
+                    onClick={() => choose(r)}
+                    style={{
+                      display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer",
+                      padding: "7px 18px", background: active ? "#E6F1FB" : "transparent",
+                      borderLeft: active ? "3px solid #185FA5" : "3px solid transparent",
+                    }}>
+                    <span style={{ fontSize: 12, color: "#999996", width: 12, flexShrink: 0, marginTop: 1 }}>{kindIcon[r.kind]}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 13, lineHeight: 1.45,
+                        color: r.kind === "completed" ? "#999996" : "#1a1a1a",
+                        textDecoration: r.kind === "completed" ? "line-through" : "none",
+                      }}>
+                        <Highlighted text={makeSnippet(r.text, terms)} terms={terms} />
+                      </div>
+                      <div style={{ fontSize: 11, color: "#999996", marginTop: 1 }}>{r.meta}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              {g.items.length > CAP && (
+                <div style={{ fontSize: 11, color: "#999996", padding: "4px 18px 4px 40px", fontStyle: "italic" }}>
+                  +{g.items.length - CAP} more — add a word to narrow it down
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN PLANNER ────────────────────────────────────────────────
 
 export default function Planner() {
@@ -1462,6 +1666,10 @@ export default function Planner() {
   const [weekOffset, setWeekOffset] = useState(0);
   // Open floating note panels: { pid, kind: "note"|"library", category, weekKey, entryId, isNew, initialText, initialPos, z }
   const [floatingNotes, setFloatingNotes] = useState([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  // { id, n } — `n` changes on every jump so re-selecting the same result still scrolls/flashes
+  const [highlight, setHighlight] = useState(null);
   const zCounterRef = useRef(900);
   // Always holds the newest planner data, so delayed saves (panel autosave
   // timers) never write back a stale snapshot over newer changes.
@@ -1529,6 +1737,36 @@ export default function Planner() {
 
   const weekDates = getWeekDates(weekOffset);
   const viewingMonday = getMondayStr(weekOffset);
+
+  // ⌘K / Ctrl+K anywhere, or "/" when not typing, opens search
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+        return;
+      }
+      if (e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const t = e.target;
+        const tag = t && t.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // After jumping to a search result: scroll it into view, flash it, then fade
+  useEffect(() => {
+    if (!highlight) return;
+    const el = document.querySelector(`[data-entry-id="${highlight.id}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const t = setTimeout(() => setHighlight(null), 2600);
+    return () => clearTimeout(t);
+  }, [highlight]);
+  const isHighlighted = (id) => highlight && highlight.id === id;
 
   if (loading) return <div style={{ padding: "2rem", color: "#666663" }}>Loading...</div>;
   if (!data) return null;
@@ -1995,6 +2233,77 @@ export default function Planner() {
     const existing = findPanelFor(kind, entry.id);
     if (existing) { focusPanel(existing.pid); return; }
     setModal({ type: kind === "note" ? "editNote" : "editLibrary", category, entry });
+  };
+
+  // ─── SEARCH NAVIGATION ───
+  // Categories this one is nested under (nearest parent first)
+  const getAncestorCategories = (categories, indents, index) => {
+    const out = [];
+    let level = (indents || {})[categories[index]] || 0;
+    for (let i = index - 1; i >= 0 && level > 0; i--) {
+      const l = (indents || {})[categories[i]] || 0;
+      if (l < level) { out.push(categories[i]); level = l; }
+    }
+    return out;
+  };
+
+  const weekOffsetFor = (mondayStr) => {
+    const [y, m, d] = mondayStr.split("-").map(Number);
+    const [y0, m0, d0] = getMondayStr(0).split("-").map(Number);
+    return Math.round((new Date(y, m - 1, d) - new Date(y0, m0 - 1, d0)) / (7 * 86400000));
+  };
+
+  // Switch to the right tab/week and un-collapse / un-hide whatever is
+  // hiding the entry — all in one save — then flash it.
+  const goToSearchResult = (r) => {
+    setSearchOpen(false);
+    setModal(null);
+    persistUpdate(d => {
+      const next = { ...d };
+      if (r.kind === "todo" || r.kind === "completed") {
+        next.activeTab = "todo";
+        const collapsed = { ...(d.collapsed || {}) };
+        if (r.kind === "completed") {
+          next.showAllCompleted = true;
+        } else if (r.section === "priority") {
+          collapsed.anytime = false;
+          collapsed["pri_" + r.key] = false;
+        } else {
+          collapsed[r.key] = false;
+          const cats = d.flatCategories || Object.keys(d.todos.flat);
+          const idx = cats.indexOf(r.key);
+          if (idx !== -1) {
+            const hidden = { ...(d.hiddenNested || {}) };
+            getAncestorCategories(cats, d.categoryIndents, idx).forEach(a => { hidden[a] = false; });
+            next.hiddenNested = hidden;
+          }
+        }
+        next.collapsed = collapsed;
+      } else if (r.kind === "note") {
+        next.activeTab = "notes";
+        next.noteCollapsed = { ...(d.noteCollapsed || {}), [r.key]: false };
+        const cats = d.noteCategories || DEFAULT_NOTE_CATEGORIES;
+        const idx = cats.indexOf(r.key);
+        if (idx !== -1) {
+          const hidden = { ...(d.noteHiddenNested || {}) };
+          getAncestorCategories(cats, d.noteIndents, idx).forEach(a => { hidden[a] = false; });
+          next.noteHiddenNested = hidden;
+        }
+      } else if (r.kind === "library") {
+        next.activeTab = "library";
+        next.libraryCollapsed = { ...(d.libraryCollapsed || {}), [r.key]: false };
+        const cats = d.libraryCategories || DEFAULT_LIBRARY_CATEGORIES;
+        const idx = cats.indexOf(r.key);
+        if (idx !== -1) {
+          const hidden = { ...(d.libraryHiddenNested || {}) };
+          getAncestorCategories(cats, d.libraryIndents, idx).forEach(a => { hidden[a] = false; });
+          next.libraryHiddenNested = hidden;
+        }
+      }
+      return next;
+    });
+    if (r.kind === "note") goToWeek(weekOffsetFor(r.week));
+    setHighlight({ id: (r.kind === "completed" ? "done-" : "") + r.id, n: Date.now() });
   };
 
   const toggleLibraryCollapse = (key) => {
@@ -2464,6 +2773,12 @@ export default function Planner() {
                 onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
                 onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
               >{data.hideCalendar ? "Show" : "Hide"}</button>
+              <button onClick={() => setSearchOpen(true)} title="Search (⌘K or /)" style={{
+                fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
+              }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#f2f1ee"; e.currentTarget.style.color = "#666663"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#999996"; }}
+              >⌕ Search</button>
               {!isMobile && !data.hideCalendar && (
                 <button onClick={() => persist({ ...data, calendarView: (data.calendarView || "week") === "week" ? "day" : "week" })} style={{
                   fontSize: 11, padding: "3px 8px", background: "transparent", color: "#999996", borderColor: "#d4d3d0", cursor: "pointer",
@@ -2756,7 +3071,9 @@ export default function Planner() {
                               {isDropHere("priority", priority, idx) && dropIndicator}
                               <div draggable onDragStart={e => handleDragStart(e, "priority", priority, item.id)} onDragEnd={handleDragEnd}
                                 onDragOver={e => handleDragOver(e, "priority", priority, idx)} onDrop={e => handleDrop(e, "priority", priority, idx)}
-                                style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "4px 0 4px 8px", cursor: "grab" }}>
+                                data-entry-id={item.id}
+                                style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "4px 0 4px 8px", cursor: "grab",
+                                  borderRadius: 4, background: isHighlighted(item.id) ? "#FFF3BF" : "transparent", transition: "background 0.6s" }}>
                                 <input type="checkbox" checked={false} onChange={() => checkTodoItem("priority", priority, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
                                 <span onClick={() => setModal({ type: "editTodo", section: "priority", subKey: priority, item: { ...item, _moveTarget: "" } })}
                                   style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flexShrink: 1, minWidth: 0 }}
@@ -2828,7 +3145,9 @@ export default function Planner() {
                         {isDropHere("flat", cat, idx) && dropIndicator}
                         <div draggable onDragStart={e => handleDragStart(e, "flat", cat, item.id)} onDragEnd={handleDragEnd}
                           onDragOver={e => handleDragOver(e, "flat", cat, idx)} onDrop={e => handleDrop(e, "flat", cat, idx)}
-                          style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "4px 0 4px 8px", cursor: "grab" }}>
+                          data-entry-id={item.id}
+                          style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "4px 0 4px 8px", cursor: "grab",
+                            borderRadius: 4, background: isHighlighted(item.id) ? "#FFF3BF" : "transparent", transition: "background 0.6s" }}>
                           <input type="checkbox" checked={false} onChange={() => checkTodoItem("flat", cat, item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
                           <span onClick={() => setModal({ type: "editTodo", section: "flat", subKey: cat, item: { ...item, _moveTarget: "" } })}
                             style={{ fontSize: 13, fontWeight: item.bold ? 700 : 400, cursor: "pointer", lineHeight: 1.5, color: item.color ? TODO_COLORS.find(c => c.name === item.color)?.color || "#1a1a1a" : "#1a1a1a", flexShrink: 1, minWidth: 0 }}
@@ -2872,7 +3191,8 @@ export default function Planner() {
               <div style={{ fontSize: 13, fontWeight: 500, color: "#666663", marginBottom: 8 }}>All completed</div>
               {data.completed.length === 0 && <div style={{ fontSize: 12, color: "#999996", fontStyle: "italic" }}>nothing completed yet</div>}
               {data.completed.slice().reverse().map(item => (
-                <div key={item.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 4px" }}>
+                <div key={item.id} data-entry-id={"done-" + item.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "3px 0 3px 4px",
+                  borderRadius: 4, background: isHighlighted("done-" + item.id) ? "#FFF3BF" : "transparent", transition: "background 0.6s" }}>
                   <input type="checkbox" checked={true} onChange={() => uncheckCompleted(item.id)} style={{ marginTop: 3, cursor: "pointer" }} />
                   <span style={{ fontSize: 13, color: "#999996", textDecoration: "line-through", lineHeight: 1.5 }}>{item.text}</span>
                   <span style={{ fontSize: 11, color: "#999996", marginLeft: "auto", whiteSpace: "nowrap" }}>{formatCompletedDate(item.completedAt)}</span>
@@ -2942,12 +3262,14 @@ export default function Planner() {
                       </div>
                     )}
                     {entries.map(entry => (
-                      <div key={entry.id} style={{
+                      <div key={entry.id} data-entry-id={entry.id} style={{
                         padding: "10px 14px", marginBottom: 8,
                         background: cc.bg, borderRadius: 8,
                         borderLeft: `3px solid ${cc.text}`,
                         cursor: "pointer",
-                        transition: "box-shadow 0.15s",
+                        outline: isHighlighted(entry.id) ? "2px solid #E8B931" : "2px solid transparent",
+                        outlineOffset: 2,
+                        transition: "box-shadow 0.15s, outline-color 0.6s",
                       }}
                         onClick={() => openEntry("note", cat, entry)}
                         onMouseEnter={e => e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)"}
@@ -3028,12 +3350,14 @@ export default function Planner() {
                       <div style={{ fontSize: 12, color: "#999996", paddingLeft: 8, fontStyle: "italic" }}>no entries</div>
                     )}
                     {entries.map(entry => (
-                      <div key={entry.id} style={{
+                      <div key={entry.id} data-entry-id={entry.id} style={{
                         padding: "10px 14px", marginBottom: 8,
                         background: cc.bg, borderRadius: 8,
                         borderLeft: `3px solid ${cc.text}`,
                         cursor: "pointer",
-                        transition: "box-shadow 0.15s",
+                        outline: isHighlighted(entry.id) ? "2px solid #E8B931" : "2px solid transparent",
+                        outlineOffset: 2,
+                        transition: "box-shadow 0.15s, outline-color 0.6s",
                       }}
                         onClick={() => openEntry("library", cat, entry)}
                         onMouseEnter={e => e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.08)"}
@@ -3335,6 +3659,20 @@ export default function Planner() {
           />
         </Modal>
       )}
+      {/* ═══ SEARCH ═══ */}
+      {searchOpen && (
+        <SearchModal
+          data={data}
+          flatCategories={flatCategories}
+          noteCategories={noteCategories}
+          libraryCategories={libraryCategories}
+          initialQuery={searchQuery}
+          onQueryChange={setSearchQuery}
+          onSelect={goToSearchResult}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
+
       {/* ═══ FLOATING NOTE PANELS ═══ */}
       {floatingNotes.map(p => {
         const cats = p.kind === "note" ? noteCategories : libraryCategories;
