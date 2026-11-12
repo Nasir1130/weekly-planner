@@ -1663,6 +1663,8 @@ export default function Planner() {
   const [planDrag, setPlanDrag] = useState(null);
   const [planDropIdx, setPlanDropIdx] = useState(null);
   const planDragRef = useRef(null);
+  const [planDropCell, setPlanDropCell] = useState(null);   // "monday|day" being hovered
+  const planDropRef = useRef(null);
   const [weekOffset, setWeekOffset] = useState(0);
   // Open floating note panels: { pid, kind: "note"|"library", category, weekKey, entryId, isNew, initialText, initialPos, z }
   const [floatingNotes, setFloatingNotes] = useState([]);
@@ -2380,55 +2382,86 @@ export default function Planner() {
     });
   };
 
-  const handlePlanDragStart = (e, day, itemId) => {
+  // A to-do can be dragged within a day (reorder), onto another day cell
+  // (reschedule), or straight from the to-do list onto a day (plan it).
+  const planCellKey = (day, monday) => `${monday}|${day}`;
+  const setPlanTarget = (cell, idx) => {
+    const cur = planDropRef.current;
+    if (cur && cur.cell === cell && cur.idx === idx) return;   // avoid re-render churn mid-drag
+    planDropRef.current = { cell, idx };
+    setPlanDropCell(cell);
+    setPlanDropIdx(idx);
+  };
+  const clearPlanDrag = () => {
+    planDragRef.current = null;
+    planDropRef.current = null;
+    setPlanDrag(null);
+    setPlanDropCell(null);
+    setPlanDropIdx(null);
+  };
+  const currentCalendarDrag = () => {
+    if (planDragRef.current) return planDragRef.current;
+    const li = dragItemRef.current;
+    return li ? { itemId: li.itemId, section: li.section, subKey: li.subKey, fromList: true } : null;
+  };
+
+  const handlePlanDragStart = (e, day, monday, item) => {
     e.stopPropagation();
-    planDragRef.current = { day, itemId };
-    setPlanDrag({ day, itemId });
+    const payload = { day, monday, itemId: item.id, section: item._section, subKey: item._subKey };
+    planDragRef.current = payload;
+    setPlanDrag(payload);
     e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData("text/plain", itemId);
+    e.dataTransfer.setData("text/plain", item.id);
     e.currentTarget.style.opacity = "0.4";
   };
   const handlePlanDragEnd = (e) => {
     e.currentTarget.style.opacity = "1";
-    planDragRef.current = null;
-    setPlanDrag(null);
-    setPlanDropIdx(null);
+    clearPlanDrag();
   };
-  const handlePlanDragOver = (e, day, idx) => {
-    const drag = planDragRef.current;
-    if (!drag || drag.day !== day) return; // only reorder within the same day
+  // idx === null means "end of the day's list"
+  const handlePlanDragOver = (e, day, monday, idx) => {
+    if (!currentCalendarDrag()) return;
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
-    if (planDropIdx !== idx) setPlanDropIdx(idx);
+    setPlanTarget(planCellKey(day, monday), idx);
   };
-  const handlePlanDrop = (e, day, insertIdx) => {
-    const drag = planDragRef.current;
-    if (!drag || drag.day !== day) return;
+  const handlePlanDrop = (e, day, monday, insertIdx) => {
+    const drag = currentCalendarDrag();
+    if (!drag) return;
     e.preventDefault();
     e.stopPropagation();
-    const ordered = getPlannedForDay(day);
-    const srcIdx = ordered.findIndex(it => it.id === drag.itemId);
-    if (srcIdx === -1) { setPlanDrag(null); setPlanDropIdx(null); return; }
-    const [moved] = ordered.splice(srcIdx, 1);
-    let idx = insertIdx;
-    if (srcIdx < idx) idx--;
-    if (idx < 0) idx = 0;
-    if (idx > ordered.length) idx = ordered.length;
-    ordered.splice(idx, 0, moved);
-
-    // Write the new sequence back across whichever categories the items live in
-    const newTodos = JSON.parse(JSON.stringify(data.todos));
-    ordered.forEach((it, order) => {
-      const list = it._section === "priority" ? newTodos.priority[it._subKey] : newTodos.flat[it._subKey];
-      if (!list) return;
-      const target = list.find(x => x.id === it.id);
-      if (target) target.plannedOrder = order;
+    persistUpdate(d => {
+      const todos = JSON.parse(JSON.stringify(d.todos));
+      const listOf = (section, key) => (section === "priority" ? todos.priority[key] : todos.flat[key]);
+      const moving = (listOf(drag.section, drag.subKey) || []).find(x => x.id === drag.itemId);
+      if (!moving) return d;
+      // The target day's current sequence, in the same order the calendar shows it
+      const seq = [];
+      [...PRIORITIES, ...(d.flatCategories || Object.keys(todos.flat))].forEach(key => {
+        const isP = PRIORITIES.includes(key);
+        (listOf(isP ? "priority" : "flat", key) || []).forEach(it => {
+          if (it.plannedDay === day && it.plannedWeek === monday) seq.push(it);
+        });
+      });
+      seq.sort((a, b) => (a.plannedOrder ?? Number.MAX_SAFE_INTEGER) - (b.plannedOrder ?? Number.MAX_SAFE_INTEGER));
+      let idx = insertIdx === null || insertIdx === undefined ? seq.length : insertIdx;
+      const srcIdx = seq.indexOf(moving);
+      if (srcIdx !== -1) { seq.splice(srcIdx, 1); if (srcIdx < idx) idx--; }
+      idx = Math.max(0, Math.min(idx, seq.length));
+      seq.splice(idx, 0, moving);
+      moving.plannedDay = day;
+      moving.plannedWeek = monday;
+      seq.forEach((it, i) => { it.plannedOrder = i; });
+      return { ...d, todos };
     });
-    persist({ ...data, todos: newTodos });
-    planDragRef.current = null;
-    setPlanDrag(null);
-    setPlanDropIdx(null);
+    clearPlanDrag();
+    if (drag.fromList) {
+      dragItemRef.current = null;
+      dropTargetRef.current = null;
+      setDragItem(null);
+      setDropTarget(null);
+    }
   };
 
   // ─── DRAG & DROP (todos) ───
@@ -2571,12 +2604,18 @@ export default function Planner() {
     const fontSize = compact ? 12 : 14;
     const timeFontSize = compact ? 12 : 14;
     return (
-      <div key={day} style={{
+      <div key={day}
+        onDragOver={e => handlePlanDragOver(e, day, wkMonday, null)}
+        onDrop={e => handlePlanDrop(e, day, wkMonday, null)}
+        style={{
         background: today ? "#E6F1FB" : "#f8f8f6", borderRadius: "8px",
         padding: compact ? "8px 10px" : "12px 16px",
         border: today ? "0.5px solid #85B7EB" : "0.5px solid #d4d3d0",
         minHeight: compact ? 90 : 60,
         overflow: "hidden",
+        outline: planDropCell === planCellKey(day, wkMonday) && !(planDrag && planCellKey(planDrag.day, planDrag.monday) === planDropCell)
+          ? "2px dashed #378ADD" : "2px dashed transparent",
+        outlineOffset: -2,
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: compact ? 6 : 8 }}>
           <div>
@@ -2656,8 +2695,9 @@ export default function Planner() {
         {/* Planned todos for this day */}
         {(() => {
           const plannedItems = getPlannedForDay(day, wkMonday);
-          if (plannedItems.length === 0) return null;
-          const isDraggingThisDay = planDrag && planDrag.day === day;
+          const isDropCell = planDropCell === planCellKey(day, wkMonday);
+          if (plannedItems.length === 0 && !isDropCell) return null;
+          const dropIdx = isDropCell ? (planDropIdx ?? plannedItems.length) : -1;
           const planIndicator = <div style={{ height: 2, background: "#85B7EB", borderRadius: 1, margin: "1px 4px" }} />;
           return (
             <>
@@ -2680,13 +2720,14 @@ export default function Planner() {
                   : getCatColor(item._subKey, flatCategories).text;
                 return (
                   <div key={item.id}>
-                    {isDraggingThisDay && planDropIdx === idx && planIndicator}
+                    {dropIdx === idx && planIndicator}
                     <div
                       draggable
-                      onDragStart={e => handlePlanDragStart(e, day, item.id)}
+                      onDragStart={e => handlePlanDragStart(e, day, wkMonday, item)}
                       onDragEnd={handlePlanDragEnd}
-                      onDragOver={e => handlePlanDragOver(e, day, idx)}
-                      onDrop={e => handlePlanDrop(e, day, idx)}
+                      onDragOver={e => handlePlanDragOver(e, day, wkMonday, idx)}
+                      onDrop={e => handlePlanDrop(e, day, wkMonday, idx)}
+                      title="Drag to reorder, or onto another day to reschedule"
                       style={{
                         display: "flex", alignItems: "flex-start", gap: compact ? 5 : 7,
                         fontSize: compact ? 11 : 13, lineHeight: 1.5, color: todoColor,
@@ -2721,15 +2762,16 @@ export default function Planner() {
                         }}>({item._subKey})</span>
                       </span>
                     </div>
-                    {idx === plannedItems.length - 1 && isDraggingThisDay && planDropIdx === idx + 1 && planIndicator}
+                    {idx === plannedItems.length - 1 && dropIdx === idx + 1 && planIndicator}
                   </div>
                 );
               })}
               {/* trailing drop zone so an item can be moved to the very end */}
-              {isDraggingThisDay && (
+              {plannedItems.length === 0 && planIndicator}
+              {isDropCell && (
                 <div style={{ height: 12 }}
-                  onDragOver={e => handlePlanDragOver(e, day, plannedItems.length)}
-                  onDrop={e => handlePlanDrop(e, day, plannedItems.length)} />
+                  onDragOver={e => handlePlanDragOver(e, day, wkMonday, plannedItems.length)}
+                  onDrop={e => handlePlanDrop(e, day, wkMonday, plannedItems.length)} />
               )}
               </div>
             </>
