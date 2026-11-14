@@ -478,20 +478,66 @@ function CollapseArrow({ collapsed }) {
   );
 }
 
+// ─── LINKS & ADDRESSES ───────────────────────────────────────────
+const URL_RE = /https?:\/\/[^\s<]+/g;
+// A US-style street address: number + street name + street type, optionally
+// followed by a unit, city, state and ZIP. e.g. "1234 Wilshire Blvd, Suite 200,
+// Santa Monica, CA 90401". Cities must be Capitalized so trailing prose
+// ("…St, then lunch") isn't swallowed.
+const STREET_TYPES = "Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Way|Place|Pl|Court|Ct|Circle|Cir|Terrace|Ter|Parkway|Pkwy|Highway|Hwy|Square|Sq|Trail|Trl|Plaza|Plz|Alley|Aly|Row|Walk|Broadway|Promenade";
+const ADDRESS_RE = new RegExp(
+  "\\b\\d{1,6}[A-Za-z]?\\s+" +                                   // 1234 / 12B
+  "(?:[NSEW]\\.?\\s+)?" +                                        // optional N / S. / E / W
+  "(?:[A-Za-z0-9.'-]+\\s+){0,4}?" +                              // street name words
+  "(?:" + STREET_TYPES + ")\\b\\.?" +                            // street type
+  "(?:,?\\s*(?:#|Suite|Ste\\.?|Apt\\.?|Unit|Fl\\.?|Floor)\\s*[\\w-]+)?" +   // unit
+  "(?:,\\s*[A-Z][A-Za-z.'-]*(?:\\s+[A-Z][A-Za-z.'-]*){0,3})?" +  // , City Name
+  "(?:,?\\s+[A-Z]{2}\\b)?" +                                     // , CA
+  "(?:\\s+\\d{5}(?:-\\d{4})?)?",                                 // 90401
+  "g"
+);
+const mapsUrl = (address) => "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(address);
+
+// Split text into plain / url / address pieces (URLs win where they overlap)
+function linkSegments(text) {
+  const out = [];
+  let last = 0;
+  const pushText = (chunk) => {
+    let i = 0;
+    for (const m of chunk.matchAll(ADDRESS_RE)) {
+      if (m.index > i) out.push({ type: "text", value: chunk.slice(i, m.index) });
+      out.push({ type: "address", value: m[0] });
+      i = m.index + m[0].length;
+    }
+    if (i < chunk.length) out.push({ type: "text", value: chunk.slice(i) });
+  };
+  for (const m of text.matchAll(URL_RE)) {
+    if (m.index > last) pushText(text.slice(last, m.index));
+    out.push({ type: "url", value: m[0] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) pushText(text.slice(last));
+  return out;
+}
+
 function Linkify({ children, style }) {
   if (typeof children !== "string") return <span style={style}>{children}</span>;
-  const urlRegex = /(https?:\/\/[^\s<]+)/g;
-  const parts = children.split(urlRegex);
-  if (parts.length === 1) return <span style={style}>{children}</span>;
+  const parts = linkSegments(children);
+  if (parts.every(p => p.type === "text")) return <span style={style}>{children}</span>;
   return (
     <span style={style}>
       {parts.map((part, i) =>
-        urlRegex.test(part) ? (
-          <a key={i} href={part} target="_blank" rel="noopener noreferrer"
+        part.type === "url" ? (
+          <a key={i} href={part.value} target="_blank" rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
             style={{ color: "#185FA5", textDecoration: "underline", wordBreak: "break-all" }}
-          >{part.length > 40 ? part.slice(0, 37) + "..." : part}</a>
-        ) : <span key={i}>{part}</span>
+          >{part.value.length > 40 ? part.value.slice(0, 37) + "..." : part.value}</a>
+        ) : part.type === "address" ? (
+          <a key={i} href={mapsUrl(part.value)} target="_blank" rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()} title="Open in Google Maps"
+            style={{ color: "#185FA5", textDecoration: "underline" }}
+          >{part.value}</a>
+        ) : <span key={i}>{part.value}</span>
       )}
     </span>
   );
@@ -841,12 +887,13 @@ function ScheduleItemForm({ item, dayKey, viewingMonday, onSave, onSaveOverride,
       <input placeholder="Description" value={text} onChange={e => setText(e.target.value)} />
       <input placeholder="Notes (Zoom link, address, etc.)" value={notes} onChange={e => setNotes(e.target.value)}
         style={{ fontSize: 13, color: "#666663" }} />
-      {notes && /(https?:\/\/[^\s<]+)/.test(notes) && (
+      {notes && linkSegments(notes).some(p => p.type !== "text") && (
         <div style={{ fontSize: 12, padding: "4px 0" }}>
-          {notes.match(/(https?:\/\/[^\s<]+)/g).map((url, i) => (
-            <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+          {linkSegments(notes).filter(p => p.type !== "text").map((p, i) => (
+            <a key={i} href={p.type === "url" ? p.value : mapsUrl(p.value)} target="_blank" rel="noopener noreferrer"
+              title={p.type === "address" ? "Open in Google Maps" : undefined}
               style={{ color: "#185FA5", textDecoration: "underline", display: "block", marginBottom: 2, wordBreak: "break-all" }}
-            >{url.length > 60 ? url.slice(0, 57) + "..." : url}</a>
+            >{p.type === "address" ? `📍 ${p.value}` : (p.value.length > 60 ? p.value.slice(0, 57) + "..." : p.value)}</a>
           ))}
         </div>
       )}
